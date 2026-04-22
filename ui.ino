@@ -69,6 +69,8 @@ extern DFRobot_GAS_I2C gas;
 extern DFRobot_ENS160_I2C ENS160;
 extern int SDS198PM100;
 extern uint16_t PM10, PM1;
+extern bool sendCurrentMeasurement();
+extern bool saveCSVData();
 
 // -------------------- Helper Logic --------------------
 
@@ -163,11 +165,21 @@ static const unsigned char PROGMEM satelit_bitmap[8] = {0x06, 0x6E, 0x74, 0x38,
 
 // Global for non-blocking UI messages
 char uiMessage[21] = "";
+uint32_t uiMessageDurationMs = DISP_MSG_DURATION_MS;
 
 // Helper to show message non-blocking
 void showMessage(const char *msg) {
   strncpy(uiMessage, msg, sizeof(uiMessage) - 1);
   uiMessage[sizeof(uiMessage) - 1] = '\0';
+  uiMessageDurationMs = DISP_MSG_DURATION_MS;
+  displayState = DISP_MESSAGE;
+  displayStateStartTime = millis();
+}
+
+void showMessageFor(const char *msg, uint32_t durationMs) {
+  strncpy(uiMessage, msg, sizeof(uiMessage) - 1);
+  uiMessage[sizeof(uiMessage) - 1] = '\0';
+  uiMessageDurationMs = durationMs;
   displayState = DISP_MESSAGE;
   displayStateStartTime = millis();
 }
@@ -541,7 +553,7 @@ void renderDisplay() {
 
   // Special States
   if (displayState == DISP_MESSAGE) {
-    if (millis() - displayStateStartTime < DISP_MSG_DURATION_MS) {
+    if (millis() - displayStateStartTime < uiMessageDurationMs) {
       u8g2.setFont(u8g2_font_6x12_tf);
       // Center message
       int w = u8g2.getStrWidth(uiMessage);
@@ -812,9 +824,25 @@ void ui_btn1_click() {
     // Reutilizamos la lógica de toggle que antes estaba en BTN2
     //testeo guardar datos tambien 
    // toggleSamplingAction(); en hiri pro para estaciones solo transmision
-    sendCurrentMeasurement();
+    bool txOk = sendCurrentMeasurement();
+    lastHttpActivityMs = millis();
+    lastHttpOk = txOk;
+
+    bool previousLogging = loggingEnabled;
+    if (SDOK) {
+      loggingEnabled = true;
+    }
     bool sdSaved = saveCSVData();
-    Serial.println("Guardado : " + String(sdSaved ? "true" : "false"));
+    loggingEnabled = previousLogging;
+    lastSdActivityMs = millis();
+    lastSdOk = sdSaved;
+
+    char resultMsg[21];
+    snprintf(resultMsg, sizeof(resultMsg), "TX %s SD %s",
+             txOk ? "OK" : "FAIL", sdSaved ? "OK" : "FAIL");
+    showMessageFor(resultMsg, 3000);
+    Serial.println("[UI] BTN1 manual action: TX " + String(txOk ? "OK" : "FAIL") +
+                   " SD " + String(sdSaved ? "OK" : "FAIL"));
     renderDisplay();
     return;
   }

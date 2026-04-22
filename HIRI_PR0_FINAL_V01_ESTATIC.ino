@@ -74,7 +74,7 @@ const byte CMD = 0xCF;
 const byte TAIL = 0xAB;
 
 // Firmware version
-String VERSION = "Pro V0.1.3V";
+String VERSION = "Pro V0.1.4V";
 
 // Global states of sensors and RTC
 bool rtcOK = false;
@@ -149,13 +149,13 @@ const uint32_t DEBUG_ROTATION_INTERVAL_MS = 10000;
 String csvFileName = "";
 String logFilePath = "";
 String failedTxPath = "";
-String currentNote = "3"; // Global note for one-shot logging
+String currentNote = "9"; // Global note for one-shot logging
 // Variables moved to main for centralization
 String lastSavedCSVLine = ""; // Used in sd_card.ino for OLED display
 File uploadFile;              // Used in wifi.ino for file uploads
 
 String deviceID = "/HIRIPV";
-const char *DEVICE_ID_STR = "2"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
+const char *DEVICE_ID_STR = "9"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
