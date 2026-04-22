@@ -2,6 +2,7 @@
 // Sistema de configuración persistente en flash (Preferences)
 // Configuración accesible por comandos seriales
 // NOTA: struct SystemConfig y variable config están declaradas en el archivo
+// ESTA confirguracion es la final para HIRIVALPO
 // principal
 
 // -------------------- Load Configuration --------------------
@@ -9,11 +10,11 @@ void loadConfig() {
   prefs.begin("config", false);
 
   // SD
-  config.sdAutoMount = prefs.getBool("sdAuto", false);
-  config.sdSavePeriod = prefs.getUInt("sdSavePer", 3000);
+  config.sdAutoMount = prefs.getBool("sdAuto", true);//vamos a cargar la sd automaticamente true
+  config.sdSavePeriod = prefs.getUInt("sdSavePer", 30000);// cambiamos a 30 segundos 
 
   // HTTP
-  config.httpSendPeriod = prefs.getUInt("httpPer", 3000);
+  config.httpSendPeriod = prefs.getUInt("httpPer", 300000);//cambiamos a 5 minutos
   config.httpTimeout = prefs.getUShort("httpTO", 15);
 
   // Display
@@ -25,13 +26,13 @@ void loadConfig() {
   config.ledBrightness = prefs.getUChar("ledBr", 50);
 
   // Autostart
-  config.autostart = prefs.getBool("autoStart", false);
-  config.autostartWaitGps = prefs.getBool("autoGPS", false);
+  config.autostart = prefs.getBool("autoStart", true); //iniciamos guardando en la sd cada 10 segundos y mandando cada 
+  config.autostartWaitGps = prefs.getBool("autoGPS", false); //no esperanos el gps para guardar y mandar
   config.autostartGpsTimeout = prefs.getUShort("autoGPSTO", 600);
-  config.autoDebug = prefs.getBool("autoDbg", false);
+  config.autoDebug = prefs.getBool("autoDbg", true); // false original el false es que esta en modo hiripro modo debug
 
-  // System
-  config.rotateDisplay = prefs.getBool("rotDisp", false);
+ // System
+  config.rotateDisplay = prefs.getBool("rotDisp", true); //false originalmente rotado para estas estaciones
 
   // GNSS Mode
   config.gnssMode = prefs.getUChar("gnssMode", 15);
@@ -54,6 +55,7 @@ void loadConfig() {
   Serial.printf("[CONFIG] Auto Debug: %s\n", config.autoDebug ? "YES" : "NO");
   Serial.printf("[CONFIG] Rotate Display: %s\n", config.rotateDisplay ? "YES" : "NO");
   Serial.printf("[CONFIG] GNSS mode: %u\n", config.gnssMode);
+
 }
 
 // -------------------- Save Configuration --------------------
@@ -93,12 +95,13 @@ void saveConfig() {
   Serial.println("[CONFIG] Saved to flash");
 }
 
-// -------------------- Reset to Defaults --------------------
+// -------------------- Reset to Defaults -------------------- 
+//cambiado a modo estacion
 void configSetDefaults() {
-  config.sdAutoMount = false; // NO montar en boot
-  config.sdSavePeriod = 3000; // 3 segundos
+  config.sdAutoMount = true; // NO montar en boot por defecto false
+  config.sdSavePeriod = 30000; // 30 segundos
 
-  config.httpSendPeriod = 3000; // 3 segundos
+  config.httpSendPeriod = 300000; // 5 minutos 
   config.httpTimeout = 15;      // 15 segundos
 
   config.oledAutoOff = false;  // Siempre encendida
@@ -107,10 +110,10 @@ void configSetDefaults() {
   config.ledEnabled = true;  // LED habilitado
   config.ledBrightness = 50; // 50% brillo
 
-  config.autostart = false;         // NO autostart
+  config.autostart = true;         // SI autostart
   config.autostartWaitGps = false;  // NO esperar GPS
   config.autostartGpsTimeout = 600; // 10 minutos (default)
-  config.autoDebug = false;         // NO autodebug
+  config.autoDebug = true;         // SI autodebug
 
   config.rotateDisplay = false;     // Display NO rotado
 

@@ -1,33 +1,33 @@
 /*
  * FirmwarePro.ino
- * Merged Firmware: GPSDebug Backend + Menu UI
+ * Firmware HIRI PR0 estatico: sensores, GNSS, SD, UI OLED y telemetria HTTP.
  *
- * Mapeo de Sensores por Dispositivo (Refactor V0.2):
- * | DEVICE_ID_STR | BaseID | Descripcion
- * | :---          | :---   | :---
- * | "1"           | 401    | Sensor 1
- * | "2"           | 406    | Sensor 2
- * | "3"           | 415    | Sensor 3 (con SHT31)
- * | "4"           | 448    | Sensor 4
- * | "5"           | 454    | Sensor 5
- * | "6"           | 460    | Sensor 6 (con SDS198)
- * | "7"           | 468    | Sensor 7
- * | "8"           | 473    | Sensor 8
- * | "9"           | 478    | Sensor 9
- * | "10"          | 484    | Sensor 10
- * | "80"          | 927    | Sensor 80
- * | "81"          | 933    | Sensor 81
- * | "82"          | 939    | Sensor 82
- * | "01M"         | 10xx   | Multi-Sensor Especial
+ * Envio HTTP vigente:
+ *   API_BASE = http://api-sensores.cmasccp.cl/insertarMedicion
+ *   DEVICE_ID_STR selecciona la lista fija de idsSensores en getIdsSensores().
+ *   GLOBAL_IDS_VARIABLES es comun a todos los dispositivos soportados.
+ *   sendCurrentMeasurement() arma valores en el mismo orden de esas listas.
  *
- * Offsets de Variables (Base + X):
- * +0: PMS (Var 3,6,7,8,9)
- * +1: Modem (Var 11,12,15,45,46)
- * +2: RTC (Var 3)
- * +3: Bat (Var 4)
- * +4: Sys (Var 11,12,42,43,44)
- * +5: SHT (Var 3,6)
- * +7: SDS198 (Var 51)
+ * Orden del payload valores:
+ *   1  SO2 / gas
+ *   2  TVOC
+ *   3  eCO2
+ *   4  Latitud
+ *   5  Longitud
+ *   6  CSQ
+ *   7  Velocidad km/h
+ *   8  Satelites
+ *   9  Bateria V
+ *   10 PMS temperatura
+ *   11 PMS humedad
+ *   12 PM1.0
+ *   13 PM2.5
+ *   14 PM10
+ *   15 PM100 SDS198
+ *   16 SHT temperatura
+ *   17 SHT humedad
+ *
+ * Los datos faltantes o invalidos se envian como "-0" para evitar romper la URL.
  */
 // --------------------LIBRARY SENSORS, DEFINES & GLOBALS --------------------
 #include "config.h"
@@ -74,7 +74,7 @@ const byte CMD = 0xCF;
 const byte TAIL = 0xAB;
 
 // Firmware version
-String VERSION = "Pro V0.1.1E";
+String VERSION = "Pro V0.1.3V";
 
 // Global states of sensors and RTC
 bool rtcOK = false;
@@ -154,49 +154,17 @@ String currentNote = "3"; // Global note for one-shot logging
 String lastSavedCSVLine = ""; // Used in sd_card.ino for OLED display
 File uploadFile;              // Used in wifi.ino for file uploads
 
-String deviceID = "/HIRIP";
-const char *DEVICE_ID_STR = "01M"; // ID del dispositivo actual "01M" es el modelo estatico
+String deviceID = "/HIRIPV";
+const char *DEVICE_ID_STR = "2"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
-//////////
-//vamos a mover las urls a helpers
-//https://api-sensores.cmasccp.cl/insertarMedicion?idsSensores=1009,1010,1010,1011,1011,1011,1011,1011,1012,1013,1013,1013,1013,1013,1014,1015,1015&idsVariables=53,54,55,11,12,15,45,46,4,3,6,7,8,9,51,3,6&valores=
-//Dioxido de Azufre (So2,ppm) ppm(1009),TVOC ppb(1010),eCO2 ppm(1010),Latitud °(1011),Longitud °(1011),Intensidad señal telefónica Adimensional(1011),Velocidad_km/h km/h(1011),Satelites int(1011),Voltaje V(1012),Grados celcius °C(1013),Humedad %(1013),Material particulado PM 1.0 µg/m³(1013),Material particulado PM 2.5 µg/m³(1013),Material particulado PM 10 µg/m³(1013),Material particulado PM 100 µg/m³(1014),Grados celcius °C(1015),Humedad %(1015)
 // -------------------- Measurements API (real endpoint) --------------------
 const char *API_BASE = "http://api-sensores.cmasccp.cl/insertarMedicion";
-// Must match backend exactly:
-//const char *IDS_SENSORES = "401,401,401,401,401,402,402,402,402,402,403,404,405,405,405,405,405"; // sensor 1 
-//const char* IDS_SENSORES ="406,406,406,406,406,407,407,407,407,407,408,409,410,410,410,410,410"; //sensor 2 
-//const char* IDS_SENSORES = "415,415,415,415,415,416,416,416,416,416,417,418,419,419,419,419,419,420,420"; //sensor 3 //tiene sht31 
-//const char* IDS_SENSORES = "448,448,448,448,448,449,449,449,449,449,450,451,452,452,452,452,452,453,453"; //sensor 4 //cuatro no actualizado en dictuc 
-//const char* IDS_SENSORES = "454,454,454,454,454,455,455,455,455,455,456,457,458,458,458,458,458,459,459"; //sensor 5
-//const char *IDS_SENSORES ="460,460,460,460,460,461,461,461,461,461,462,463,464,464,464,464,464,467"; // sensor 6   // tiene un sensor SDS198
-//const char* IDS_SENSORES = "468,468,468,468,468,469,469,469,469,469,470,471,472,472,472,472,472"; //sensor 7 
-//const char* IDS_SENSORES ="473,473,473,473,473,474,474,474,474,474,475,476,477,477,477,477,477"; //sensor 8 
-//const char* IDS_SENSORES = "478,478,478,478,478,479,479,479,479,479,480,481,482,482,482,482,482,483,483"; //sensor 9 
-//const char* IDS_SENSORES = "484,484,484,484,484,485,485,485,485,485,486,487,488,488,488,488,488,489,489"; //sensor 10 
-//const char* IDS_SENSORES = "927,927,927,927,927,928,928,928,928,928,929,930,931,931,931,931,931,932,932"; //sensor 80 
-//const char* IDS_SENSORES = "933,933,933,933,933,934,934,934,934,934,935,936,937,937,937,937,937,938,938";//sensor 81 
-//const char* IDS_SENSORES = "939,939,939,939,939,940,940,940,940,940,941,942,943,943,943,943,943,944,944"; //sensor 82
-
-const char *IDS_VARIABLES = "3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44"; // los mismos datos pero
-                                                   // cambia el ID-sensor cambia
-                                                   // el numero de sensores
-const char *IDS_VARIABLESSHT31 = "3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44,3,6"; // los mismos datos pero
-                                                       // caria el ID-sensor
-                                                       // cambia el numero de
-                                                       // sensores
-const char *IDS_VARIABLES06 = "3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44,51"; // los mismos datos pero
-                                                      // caria el ID-sensor
-                                                      // cambia el numero de
-                                                      // sensores
-                                                      //  ur format helpers
-String valores;
-String url;
+const char *GLOBAL_IDS_VARIABLES = "53,54,55,11,12,15,45,46,4,3,6,7,8,9,51,3,6";
 
 // APN
-const char apn[] = "gigsky-02";
+const char apn[] = "flolive.net"; // flolive.net nuevo apn const char apn[] = "gigsky-02"; 
 const char gprsUser[] = "";
 const char gprsPass[] = "";
 
@@ -306,6 +274,7 @@ const int SD_SCLK = 14, SD_MISO = 2, SD_MOSI = 15, SD_CS = 13;
 // Extern function declarations (if needed explicitly, though linking usually
 // handles it)
 void loadConfig();
+void saveConfig();
 void applyLEDConfig();
 void writeErrorLogHeader();
 String generateCSVFileName();
@@ -491,100 +460,59 @@ void updateNetworkInfo() {
 // Construye payload/URL de medición según hardware activo y envía por HTTP.
 // Persiste contadores en flash y registra fallos en SD cuando corresponde.
 extern bool SHT31OK, SHT4xOK, SDS198OK, GasOK, ENS160OK;
-extern String currentNote;
 extern int SDS198PM100;
 extern float tempsht31, humsht31, tempsht4x, humsht4x;
 extern DFRobot_GAS_I2C gas;
 extern DFRobot_ENS160_I2C ENS160;
 
-// Helper para añadir bloques a la URL (idsSensores, idsVariables, valores)
-void addBlock(String &idsS, String &idsV, String &vals, const String &sId, const String &vId, const String &val) {
-  if (idsS.length() > 0) {
-    idsS += ",";
-    idsV += ",";
-    vals += ",";
-  }
-  idsS += sId;
-  idsV += vId;
-  vals += val;
+// idsSensores vigentes por dispositivo. Cada lista debe tener 17 posiciones y
+// mantener el mismo orden que GLOBAL_IDS_VARIABLES y los v1..v17 del payload.
+String getIdsSensores(const String& deviceId) {
+  if (deviceId == "1") return "1028,1029,1029,1030,1030,1030,1030,1030,1031,1032,1032,1032,1032,1032,1033,1042,1042";
+  if (deviceId == "2") return "1035,1036,1036,1037,1037,1037,1037,1037,1038,1039,1039,1039,1039,1039,1040,1041,1041";
+  if (deviceId == "3") return "1048,1049,1049,1050,1050,1050,1050,1050,1051,1052,1052,1052,1052,1052,1053,1054,1054";
+  if (deviceId == "4") return "1055,1056,1056,1057,1057,1057,1057,1057,1058,1059,1059,1059,1059,1059,1060,1061,1061";
+  if (deviceId == "5") return "1079,1080,1080,1081,1081,1081,1081,1081,1082,1083,1083,1083,1083,1083,1084,1085,1085";
+  if (deviceId == "6") return "1086,1087,1087,1088,1088,1088,1088,1088,1089,1090,1090,1090,1090,1090,1091,1092,1092";
+  if (deviceId == "7") return "1093,1094,1094,1095,1095,1095,1095,1095,1096,1097,1097,1097,1097,1097,1098,1099,1099";
+  if (deviceId == "9") return "1107,1108,1108,1109,1109,1109,1109,1109,1110,1111,1111,1111,1111,1111,1112,1113,1113";
+  if (deviceId == "10") return "1114,1115,1115,1116,1116,1116,1116,1116,1117,1118,1118,1118,1118,1118,1119,1120,1120";
+  return ""; 
 }
 
 bool sendCurrentMeasurement() {
-  String idsSensores = "";
-  String idsVariables = "";
-  String valores = "";
-
-  String devIdStr = String(DEVICE_ID_STR);
-  int baseId = getBaseSensorId(devIdStr);
-  bool isMulti = (devIdStr == "01M");// esto deberia actualizarse segun el hardware que se conecte
-
-  // --- BLOQUE ESPECIAL GAS (01M o GasOK)
-  if (isMulti || GasOK) {
-    String sId = isMulti ? "1009" : String(baseId); 
-    addBlock(idsSensores, idsVariables, valores, sId, "53", safeFloatStr(gas.readGasConcentrationPPM()));
+  String idsSensores = getIdsSensores(String(DEVICE_ID_STR));
+  if (idsSensores == "") {
+      Serial.println("[HTTP] Error: No idsSensores configured for this DEVICE_ID.");
+      return false; 
   }
 
-  // --- BLOQUE ESPECIAL ENS160 (01M o ENSOK)
-  if (isMulti || ENS160OK) {
-    String sId = isMulti ? "1010" : String(baseId); 
-    addBlock(idsSensores, idsVariables, valores, sId, "54", safeIntStr(ENS160.getTVOC()));
-    addBlock(idsSensores, idsVariables, valores, sId, "55", safeIntStr(ENS160.getECO2()));
-  }
+  String v1 = GasOK ? safeFloatStr(gas.readGasConcentrationPPM()) : missingUrlValue();
+  String v2 = ENS160OK ? safeIntStr(ENS160.getTVOC()) : missingUrlValue();
+  String v3 = ENS160OK ? safeIntStr(ENS160.getECO2()) : missingUrlValue();
+  String v4 = safeGpsStr(gpsLat);
+  String v5 = safeGpsStr(gpsLon);
+  String v6 = safeIntStr(csq);
+  String v7 = gpsSpeedKmh.length() ? gpsSpeedKmh : missingUrlValue();
+  String v8 = safeSatsStr(satellitesStr);
+  String v9 = safeFloatStr(batV);
+  String v10 = isnan(pmsTempC) ? missingUrlValue() : safeFloatStr(pmsTempC);
+  String v11 = isnan(pmsHum) ? missingUrlValue() : safeFloatStr(pmsHum);
+  String v12 = safeUIntStr(PM1);
+  String v13 = safeUIntStr(PM25);
+  String v14 = safeUIntStr(PM10);
+  String v15 = SDS198OK ? safeUIntStr(SDS198PM100) : missingUrlValue();
 
-  // --- BLOQUE PMS (Base + 0 o 1013)
-  String sIdPms = isMulti ? "1013" : String(baseId);
-  addBlock(idsSensores, idsVariables, valores, sIdPms, "3", isnan(pmsTempC) ? "0" : safeFloatStr(pmsTempC));
-  addBlock(idsSensores, idsVariables, valores, sIdPms, "6", isnan(pmsHum) ? "0" : safeFloatStr(pmsHum));
-  addBlock(idsSensores, idsVariables, valores, sIdPms, "7", safeUIntStr(PM1));
-  addBlock(idsSensores, idsVariables, valores, sIdPms, "8", safeUIntStr(PM25));
-  addBlock(idsSensores, idsVariables, valores, sIdPms, "9", safeUIntStr(PM10));
+  float tSht = SHT4xOK ? tempsht4x : (SHT31OK ? tempsht31 : NAN);
+  float hSht = SHT4xOK ? humsht4x : (SHT31OK ? humsht31 : NAN);
+  String v16 = isnan(tSht) ? missingUrlValue() : safeFloatStr(tSht);
+  String v17 = isnan(hSht) ? missingUrlValue() : safeFloatStr(hSht);
 
-  // --- BLOQUE GPS/MODEM (Base + 1 o 1011)
-  String sIdGps = isMulti ? "1011" : String(baseId + 1);
-  addBlock(idsSensores, idsVariables, valores, sIdGps, "11", safeGpsStr(gpsLat));
-  addBlock(idsSensores, idsVariables, valores, sIdGps, "12", safeGpsStr(gpsLon));
-  addBlock(idsSensores, idsVariables, valores, sIdGps, "15", safeIntStr(csq));
-  addBlock(idsSensores, idsVariables, valores, sIdGps, "45", (gpsSpeedKmh.length() ? gpsSpeedKmh : "0"));
-  addBlock(idsSensores, idsVariables, valores, sIdGps, "46", safeSatsStr(satellitesStr));
-
-  // --- BLOQUE BATERIA (Base + 3 o 1012)
-  String sIdBat = isMulti ? "1012" : String(baseId + 3);
-  addBlock(idsSensores, idsVariables, valores, sIdBat, "4", safeFloatStr(batV));
-
-  // --- BLOQUE RTC (Base + 2 o 1013)
-  if (rtcOK) {
-    String sIdRtc = isMulti ? "1013" : String(baseId + 2);
-    addBlock(idsSensores, idsVariables, valores, sIdRtc, "3", safeFloatStr(rtcTempC));
-  }
-
-  // --- BLOQUE SISTEMA/LOG (Base + 4) -> No usado en 01M segun string propuesto
-  if (!isMulti && baseId != -1) {
-    String sIdSys = String(baseId + 4);
-    addBlock(idsSensores, idsVariables, valores, sIdSys, "11", safeGpsStr(gpsLat));
-    addBlock(idsSensores, idsVariables, valores, sIdSys, "12", safeGpsStr(gpsLon));
-    addBlock(idsSensores, idsVariables, valores, sIdSys, "42", safeUIntStr(sendCounter + 1));
-    addBlock(idsSensores, idsVariables, valores, sIdSys, "43", loggingEnabled ? "1" : "0");
-    addBlock(idsSensores, idsVariables, valores, sIdSys, "44", currentNote.length() ? currentNote : "0");
-  }
-
-  // --- BLOQUE SDS198 (Base + 7 o 1014)
-  if (SDS198OK) {
-    String sIdSds = isMulti ? "1014" : String(baseId + 7);
-    addBlock(idsSensores, idsVariables, valores, sIdSds, "51", safeUIntStr(SDS198PM100));
-  }
-
-  // --- BLOQUE SHT (Base + 5 o 1015)
-  if (SHT31OK || SHT4xOK) {
-    String sIdSht = isMulti ? "1015" : String(baseId + 5);
-    // Priorizamos SHT4x si ambos están presentes (debido a posible colisión de dirección I2C 0x44)
-    float t = SHT4xOK ? tempsht4x : tempsht31;
-    float h = SHT4xOK ? humsht4x : humsht31;
-    addBlock(idsSensores, idsVariables, valores, sIdSht, "3", safeFloatStr(t));
-    addBlock(idsSensores, idsVariables, valores, sIdSht, "6", safeFloatStr(h));
-  }
+  String valores = v1 + "," + v2 + "," + v3 + "," + v4 + "," + v5 + "," + v6 + "," + v7 + "," + v8 + "," + v9 + "," + 
+                   v10 + "," + v11 + "," + v12 + "," + v13 + "," + v14 + "," + v15 + "," + v16 + "," + v17;
 
   String fullUrl = String(API_BASE) + "?idsSensores=" + idsSensores + 
-                   "&idsVariables=" + idsVariables + "&valores=" + valores;
+                   "&idsVariables=" + GLOBAL_IDS_VARIABLES + "&valores=" + valores;
 
   Serial.println("[HTTP] GET " + fullUrl);
   if (httpGet_webhook(fullUrl)) {
@@ -668,16 +596,13 @@ void setup() {
   wasStreamingBeforeBoot = prefs.getBool("streaming", false);
   prefs.end();
 
-  // Estado runString apIpStr = "0.0.0.0";
-volatile bool streaming = false;
-volatile bool loggingEnabled = false;
-
-// UI Rotation (Modo Debug)
-uint8_t debugScreenIndex = 0;
-uint32_t lastDebugRotationMs = 0;
-const uint32_t DEBUG_ROTATION_INTERVAL_MS = 10000;
-
   loadConfig();
+  if (!config.sdAutoMount || !config.autoDebug) {
+    config.sdAutoMount = true;
+    config.autoDebug = true;
+    saveConfig();
+    Serial.println("[CONFIG] Station defaults enforced: SD auto-mount and Auto Debug ON");
+  }
   applyLEDConfig();
 
   // Create Log Paths
@@ -729,6 +654,27 @@ const uint32_t DEBUG_ROTATION_INTERVAL_MS = 10000;
     u8g2.print("RTC:OK");
   }
   u8g2.sendBuffer();
+
+  // SD Auto Mount early in boot so the startup screen reports SD status.
+  spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
+  SDOK = SD.begin(SD_CS, spiSD);
+  if (SDOK) {
+    oledStatus("SD OK", "Card mounted");
+    delay(700);
+    if (!csvFileName.length() || !SD.exists(csvFileName.c_str())) {
+      csvFileName = generateCSVFileName();
+      writeCSVHeader();
+    }
+
+    prefs.begin("system", false);
+    prefs.putString("csvFile", csvFileName);
+    prefs.end();
+    Serial.println("[BOOT] SD detected");
+  } else {
+    oledStatus("SD FAIL", "Card not mounted", "Check SD");
+    delay(1200);
+    Serial.println("[BOOT][SD][ERR] SD auto-mount failed");
+  }
 
   // SDS198 Check (Basic Serial2 verify)
   // Nota: SDS198 no tiene begin() que devuelva bool, asumimos OK si el ID es "06" 
@@ -917,35 +863,17 @@ const uint32_t DEBUG_ROTATION_INTERVAL_MS = 10000;
   // - Verificar SD al inicio.
   // - Si antes estaba activo y el reinicio fue "solo" (no SW manual),
   //   reanudar streaming+logging.
-  if (config.sdAutoMount || wasStreamingBeforeBoot) {
-    spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
-    SDOK = SD.begin(SD_CS, spiSD);
-    if (SDOK) {
-      if (!csvFileName.length() || !SD.exists(csvFileName.c_str())) {
-        csvFileName = generateCSVFileName();
-        writeCSVHeader();
-      }
+  if (SDOK && wasStreamingBeforeBoot) {
+    bool rebootWasUnexpected =
+        (rebootReason == "Panic" || rebootReason == "IntWatchdog" ||
+         rebootReason == "TaskWatchdog" || rebootReason == "OtherWatchdog");
 
-      prefs.begin("system", false);
-      prefs.putString("csvFile", csvFileName);
-      prefs.end();
-
-      // Autoresume SOLO en reinicios claramente inesperados por watchdog/panic.
-      // Evita retomar streaming tras reinicios manuales, power-on o estados
-      // ambiguos.
-      bool rebootWasUnexpected =
-          (rebootReason == "Panic" || rebootReason == "IntWatchdog" ||
-           rebootReason == "TaskWatchdog" || rebootReason == "OtherWatchdog");
-
-      if (wasStreamingBeforeBoot && rebootWasUnexpected) {
-        streaming = true;
-        loggingEnabled = true;
-        writeErrorLogHeader();
-        Serial.println(
-            "[BOOT] Auto-resume enabled (previous state + unexpected reboot)");
-      } else {
-        Serial.println("[BOOT] SD detected. Streaming/logging remain OFF");
-      }
+    if (rebootWasUnexpected) {
+      streaming = true;
+      loggingEnabled = true;
+      writeErrorLogHeader();
+      Serial.println(
+          "[BOOT] Auto-resume enabled (previous state + unexpected reboot)");
     }
   }
 
@@ -955,12 +883,10 @@ const uint32_t DEBUG_ROTATION_INTERVAL_MS = 10000;
     Serial.println("[BOOT] Autostart enabled: streaming and logging ON");
   }
 
-  if (config.autoDebug) {
-    uiFullMode = true;
-    debugScreenIndex = 0;
-    showMessage("MODO DEBUG");
-    Serial.println("[BOOT] Auto Debug enabled");
-  }
+  uiFullMode = true;
+  debugScreenIndex = 0;
+  showMessage("MODO DEBUG");
+  Serial.println("[BOOT] Debug mode forced ON");
 
   Serial.println("[READY] Loop starting");
 }
@@ -1117,8 +1043,7 @@ void loop() {
   }
 
   // Auto Off
-  if (config.oledAutoOff &&
-      (millis() - lastOledActivity > config.oledTimeout)) {
+  if (config.oledAutoOff && (millis() - lastOledActivity > config.oledTimeout)) {
     u8g2.setPowerSave(1);
   }
 

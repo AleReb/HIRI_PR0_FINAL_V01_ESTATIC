@@ -1,9 +1,11 @@
 
 
 // -------------------- Safe value helpers --------------------
+static inline String missingUrlValue() { return "-0"; }
+
 static inline String safeFloatStr(float v) {
   if (isnan(v) || isinf(v))
-    return "0";
+    return missingUrlValue();
   return String(v, 3);
 }
 
@@ -11,38 +13,20 @@ static inline String safeUIntStr(uint32_t v) { return String(v); }
 
 static inline String safeIntStr(int v) { return String(v); }
 
-// -------------------- Dynamic URL Generation --------------------
-int getBaseSensorId(const String &deviceId) {
-  if (deviceId == "1") return 401;
-  if (deviceId == "2") return 406;
-  if (deviceId == "3") return 415;
-  if (deviceId == "4") return 448;
-  if (deviceId == "5") return 454;
-  if (deviceId == "6") return 460;
-  if (deviceId == "7") return 468;
-  if (deviceId == "8") return 473;
-  if (deviceId == "9") return 478;
-  if (deviceId == "10") return 484;
-  if (deviceId == "80") return 927;
-  if (deviceId == "81") return 933;
-  if (deviceId == "82") return 939;
-  return -1; // Especial o desconocido
-}
-
 static inline String safeGpsStr(const String &s) {
   if (s.length() == 0)
-    return "0";
+    return missingUrlValue();
   if (s == "NaN" || s == "N/A")
-    return "0";
+    return missingUrlValue();
   return s;
 }
 
 static inline String safeSatsStr(const String &s) {
   if (s.length() == 0)
-    return "0";
+    return missingUrlValue();
   for (size_t i = 0; i < s.length(); ++i) {
     if (!isDigit(s[i]))
-      return "0";
+      return missingUrlValue();
   }
   return s;
 }

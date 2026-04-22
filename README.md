@@ -42,23 +42,19 @@ arduino-cli compile --fqbn esp32:esp32:esp32 FirmwarePro.ino
 arduino-cli upload -p COM5 --fqbn esp32:esp32:esp32 FirmwarePro.ino
 ```
 
-## Mapeo de Sensores (V0.2)
-El sistema utiliza una construcción dinámica de URL basada en el `DEVICE_ID_STR`.
+## Mapeo de Sensores HTTP
+El envio HTTP usa `DEVICE_ID_STR` para seleccionar una lista fija de `idsSensores` en `getIdsSensores()`.
+La lista de `idsVariables` es comun para todos los dispositivos soportados:
 
-| ID (`DEVICE_ID_STR`) | BaseID | Notas |
-| :--- | :--- | :--- |
-| "1" a "10" | 4xx | Sensores estándar |
-| "80", "81", "82" | 9xx | Sensores serie 8x |
-| "01M" | 10xx | Multi-Sensor Especial |
+```text
+53,54,55,11,12,15,45,46,4,3,6,7,8,9,51,3,6
+```
 
-### Estructura de Bloques (Offsets)
-- `+0`: PMS (Variables 3, 6, 7, 8, 9)
-- `+1`: GPS/Módem (Variables 11, 12, 15, 45, 46)
-- `+2`: RTC (Variable 3)
-- `+3`: Batería (Variable 4)
-- `+4`: Sistema (Variables 11, 12, 42, 43, 44)
-- `+5`: SHT31 (Variables 3, 6)
-- `+7`: SDS198 (Variable 51)
+El payload `valores` se arma en ese mismo orden: SO2/gas, TVOC, eCO2, latitud,
+longitud, CSQ, velocidad, satelites, bateria, temperatura PMS, humedad PMS,
+PM1.0, PM2.5, PM10, PM100 SDS198, temperatura SHT y humedad SHT.
+
+Los datos faltantes o invalidos se transmiten como `-0`.
 
 ## Disclaimer de responsabilidad
 

@@ -31,8 +31,12 @@
 #define POWER_PIN 33
 #define NEOPIX_PIN 12
 #define NUMPIXELS 1
+/*
+NOTA EN LA PLACA VIEJA COYAHIQUE SOLO ESTA EL BOTON 39
+*/
 #define BUTTON_PIN_1 39 //este pin necesita resistencia extra lee low al apretarse y high al soltarse
 #define BUTTON_PIN_2 0  // este es el boton 2 esto funciona ok
+
 #define Serial2RX_PIN 23 // Pin RX del ESP32 conectado al TX del sensor.
 #define Serial2TX_PIN 19  // Pin TX del ESP32 (no se usa para recibir datos del sensor).
 

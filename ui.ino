@@ -808,9 +808,13 @@ void ui_btn1_click() {
   }
 
   if (uiFullMode) {
-    // En modo FULL, BTN1 click ahora INICIA/DETIENE el muestreo (Acción rápida)
+    // En modo FULL, BTN1 click ahora INICIA/DETIENE el muestreo (Acción rápida) ahora vamos a hacer una prueba de transmision de datos 
     // Reutilizamos la lógica de toggle que antes estaba en BTN2
-    toggleSamplingAction();
+    //testeo guardar datos tambien 
+   // toggleSamplingAction(); en hiri pro para estaciones solo transmision
+    sendCurrentMeasurement();
+    bool sdSaved = saveCSVData();
+    Serial.println("Guardado : " + String(sdSaved ? "true" : "false"));
     renderDisplay();
     return;
   }
@@ -827,7 +831,6 @@ void ui_btn1_click() {
 // Controla navegación entre niveles y acciones no críticas.
 void ui_btn2_click() {
   Serial.println("[UI] BTN2 Click");
-
   if (displayState == DISP_PROMPT) {
     // Perform Toggle using helper
     toggleSamplingAction();
