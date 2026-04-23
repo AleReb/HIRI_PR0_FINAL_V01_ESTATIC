@@ -155,7 +155,7 @@ String lastSavedCSVLine = ""; // Used in sd_card.ino for OLED display
 File uploadFile;              // Used in wifi.ino for file uploads
 
 String deviceID = "/HIRIPV";
-const char *DEVICE_ID_STR = "10"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
+const char *DEVICE_ID_STR = "9"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
@@ -1007,9 +1007,12 @@ void setup() {
 
   // BUTTONS (Interrupts)
   pinMode(BUTTON_PIN_1, INPUT);//INPUT_PULLUP #define BUTTON_PIN_1 39 //
-  pinMode(BUTTON_PIN_2, INPUT_PULLUP); //btn 0
   // Button 1 now uses Software Polling to survive bare wire bouncing
-  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN_2), isr_btn2, RISING);//boton enter
+  if (BUTTON_PIN_2 >= 0) {
+    pinMode(BUTTON_PIN_2, INPUT_PULLUP); // btn 0
+    attachInterrupt(digitalPinToInterrupt(BUTTON_PIN_2), isr_btn2,
+                    RISING); // boton enter
+  }
 
   // MODEM
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);

@@ -35,7 +35,10 @@
 NOTA EN LA PLACA VIEJA COYAHIQUE SOLO ESTA EL BOTON 39
 */
 #define BUTTON_PIN_1 39 //este pin necesita resistencia extra lee low al apretarse y high al soltarse
-#define BUTTON_PIN_2 0  // este es el boton 2 esto funciona ok
+// Boton 2 deshabilitado por defecto.
+// esto esta en el void setup, como 
+// Para habilitarlo de nuevo, cambia -1 por el GPIO real. Ejemplo: #define BUTTON_PIN_2 0
+#define BUTTON_PIN_2 -1
 
 #define Serial2RX_PIN 23 // Pin RX del ESP32 conectado al TX del sensor.
 #define Serial2TX_PIN 19  // Pin TX del ESP32 (no se usa para recibir datos del sensor).
