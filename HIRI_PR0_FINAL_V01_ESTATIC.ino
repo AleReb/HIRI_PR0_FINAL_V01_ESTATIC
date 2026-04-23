@@ -74,7 +74,7 @@ const byte CMD = 0xCF;
 const byte TAIL = 0xAB;
 
 // Firmware version
-String VERSION = "Pro V0.1.4V";
+String VERSION = "Pro V0.1.6V";
 
 // Global states of sensors and RTC
 bool rtcOK = false;
@@ -149,13 +149,13 @@ const uint32_t DEBUG_ROTATION_INTERVAL_MS = 10000;
 String csvFileName = "";
 String logFilePath = "";
 String failedTxPath = "";
-String currentNote = "9"; // Global note for one-shot logging
+String currentNote = "8"; // Global note for one-shot logging
 // Variables moved to main for centralization
 String lastSavedCSVLine = ""; // Used in sd_card.ino for OLED display
 File uploadFile;              // Used in wifi.ino for file uploads
 
 String deviceID = "/HIRIPV";
-const char *DEVICE_ID_STR = "9"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
+const char *DEVICE_ID_STR = "10"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
@@ -164,7 +164,7 @@ const char *API_BASE = "http://api-sensores.cmasccp.cl/insertarMedicion";
 const char *GLOBAL_IDS_VARIABLES = "53,54,55,11,12,15,45,46,4,3,6,7,8,9,51,3,6";
 
 // APN
-const char apn[] = "flolive.net"; // flolive.net nuevo apn const char apn[] = "gigsky-02"; 
+const char apn[] = "flolive.net"; //  "flolive.net"; nuevo apn const char apn[] = "gigsky-02"; 
 const char gprsUser[] = "";
 const char gprsPass[] = "";
 
@@ -205,6 +205,26 @@ uint32_t lastXtraDownload = 0;
 bool xtraSupported = false;
 bool xtraLastOk = false;
 const uint32_t XTRA_REFRESH_MS = 3UL * 24UL * 60UL * 60UL * 1000UL;
+const uint32_t NETWORK_RESTART_INTERVAL_MS = 2UL * 60UL * 60UL * 1000UL;
+const uint32_t NETWORK_WATCHDOG_CHECK_MS = 60000UL;
+const uint8_t MAX_MODEM_RECOVERY_ATTEMPTS = 3;
+const uint32_t MODEM_INIT_TOTAL_TIMEOUT_MS = 90000UL;
+const uint32_t MODEM_BOOT_SETTLE_MS = 3000UL;
+const uint32_t HEALTH_LOG_INTERVAL_MS = 300000UL;
+const uint8_t ENS160_INVALID_REINIT_THRESHOLD = 3;
+const uint8_t SHT4X_FAIL_REINIT_THRESHOLD = 3;
+uint32_t networkDownSinceMs = 0;
+uint32_t lastNetworkWatchdogCheckMs = 0;
+uint8_t modemRecoveryAttempts = 0;
+uint32_t lastHealthLogMs = 0;
+uint8_t ens160InvalidCount = 0;
+uint8_t sht4xFailCount = 0;
+uint8_t ens160StatusRaw = 0;
+uint16_t ens160Tvoc = 0;
+uint16_t ens160Eco2 = 0;
+uint8_t ens160Aqi = 0;
+bool ens160DataValid = false;
+char currentCriticalStage[32] = "boot";
 
 // Display State
 // Display State
@@ -303,9 +323,19 @@ void downloadXtraIfDue();
 void parseNMEA(const String &line);
 void saveFailedTransmission(const String &url, const String &errorType);
 bool sendCurrentMeasurement();
+void logError(const String &type, const String &ctx, const String &msg);
 void handleButtonLogic(); // Renamed from dispatchButtonFlags
 void showMessage(const char *msg); // From ui.ino
 extern bool uiFullMode; // From ui.ino
+bool initModemWithRecovery();
+void modemColdBootSequence();
+bool modemWaitForAT(uint32_t totalTimeoutMs);
+bool modemInitAttempt();
+void networkRestartWatchdogTick();
+void refreshHealthLog();
+void recoverI2CBus(const char *reason);
+void initI2CSensors();
+void updateEns160State();
 
 // ISR Function Prototypes
 void IRAM_ATTR isr_btn1();
@@ -452,6 +482,259 @@ void updateNetworkInfo() {
   }
 }
 
+bool modemWaitForAT(uint32_t totalTimeoutMs) {
+  uint32_t start = millis();
+  uint32_t attempt = 0;
+  while (millis() - start < totalTimeoutMs) {
+    esp_task_wdt_reset();
+    attempt++;
+    strncpy(currentCriticalStage, "modem_testAT", sizeof(currentCriticalStage) - 1);
+    currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
+    if (modem.testAT(1000)) {
+      return true;
+    }
+    Serial.printf("[MODEM] testAT retry %lu\n", (unsigned long)attempt);
+    delay(300);
+  }
+  logError("MODEM_AT_TIMEOUT", "modemWaitForAT",
+           "testAT timeout during modem init");
+  return false;
+}
+
+void modemColdBootSequence() {
+  strncpy(currentCriticalStage, "modem_cold_boot",
+          sizeof(currentCriticalStage) - 1);
+  currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
+
+  pinMode(MODEM_PWRKEY, OUTPUT);
+  pinMode(MODEM_FLIGHT, OUTPUT);
+  pinMode(MODEM_DTR, OUTPUT);
+
+  digitalWrite(MODEM_FLIGHT, HIGH);
+  digitalWrite(MODEM_DTR, LOW);
+  digitalWrite(MODEM_PWRKEY, HIGH);
+  delay(1200);
+  digitalWrite(MODEM_PWRKEY, LOW);
+  delay(MODEM_BOOT_SETTLE_MS);
+}
+
+bool modemInitAttempt() {
+  oledStatus("MODEM", "Cold boot...");
+  modemColdBootSequence();
+
+  if (!modemWaitForAT(MODEM_INIT_TOTAL_TIMEOUT_MS)) {
+    return false;
+  }
+
+  oledStatus("MODEM", "Config...");
+  strncpy(currentCriticalStage, "modem_setup", sizeof(currentCriticalStage) - 1);
+  currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
+  if (!atRun("+CEDRXS=0", "OK", "ERROR", 1500)) {
+    logError("MODEM_CFG_FAIL", "CEDRXS", "Failed to disable eDRX");
+    return false;
+  }
+  if (!atRun("+CPSMS=0", "OK", "ERROR", 1500)) {
+    logError("MODEM_CFG_FAIL", "CPSMS", "Failed to disable PSM");
+    return false;
+  }
+
+  oledStatus("NET", "Attach/PDP...");
+  strncpy(currentCriticalStage, "wait_network", sizeof(currentCriticalStage) - 1);
+  currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
+  if (!modem.waitForNetwork(60000)) {
+    logError("MODEM_NET_FAIL", "waitForNetwork", "Attach timeout");
+    oledStatus("NET", "Attach FAIL");
+    return false;
+  }
+
+  strncpy(currentCriticalStage, "gprs_connect", sizeof(currentCriticalStage) - 1);
+  currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
+  if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
+    logError("MODEM_PDP_FAIL", "gprsConnect", "PDP connect failed");
+    oledStatus("NET", "PDP FAIL");
+    return false;
+  }
+
+  modemRecoveryAttempts = 0;
+  hasRed = true;
+  oledStatus("NET", "PDP OK");
+  return true;
+}
+
+bool initModemWithRecovery() {
+  for (uint8_t attempt = 1; attempt <= MAX_MODEM_RECOVERY_ATTEMPTS; ++attempt) {
+    Serial.printf("[MODEM] Init attempt %u/%u\n", attempt,
+                  MAX_MODEM_RECOVERY_ATTEMPTS);
+    if (modemInitAttempt()) {
+      return true;
+    }
+    modemRecoveryAttempts = attempt;
+    char attemptBuf[8];
+    snprintf(attemptBuf, sizeof(attemptBuf), "%u", attempt);
+    oledStatus("MODEM", "RECOVERY", attemptBuf);
+    delay(800);
+  }
+
+  logError("MODEM_INIT_FATAL", "initModemWithRecovery",
+           "Modem init failed after recovery attempts");
+  return false;
+}
+
+void initI2CSensors() {
+  if (!sht4.begin()) {
+    SHT4xOK = false;
+    logError("I2C_SENSOR_FAIL", "SHT4X.begin", "SHT4x not found");
+  } else {
+    sht4.setPrecision(SHT4X_HIGH_PRECISION);
+    sht4.setHeater(SHT4X_NO_HEATER);
+    SHT4xOK = true;
+    sht4xFailCount = 0;
+  }
+
+  if (!sht31.begin(0x44)) {
+    SHT31OK = false;
+    logError("I2C_SENSOR_FAIL", "SHT31.begin", "SHT31 not found");
+  } else {
+    SHT31OK = true;
+  }
+
+  if (NO_ERR != ENS160.begin()) {
+    ENS160OK = false;
+    ens160DataValid = false;
+    logError("I2C_SENSOR_FAIL", "ENS160.begin", "ENS160 init failed");
+  } else {
+    ENS160.setPWRMode(ENS160_STANDARD_MODE);
+    ENS160OK = true;
+    ens160InvalidCount = 0;
+  }
+}
+
+void recoverI2CBus(const char *reason) {
+  logError("I2C_RECOVER", "recoverI2CBus", reason);
+  strncpy(currentCriticalStage, "i2c_recover", sizeof(currentCriticalStage) - 1);
+  currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
+  Wire.end();
+  delay(50);
+  Wire.begin();
+  Wire.setTimeOut(50);
+  Wire.setClock(100000);
+  initI2CSensors();
+}
+
+void updateEns160State() {
+  if (!ENS160OK) {
+    ens160DataValid = false;
+    return;
+  }
+
+  strncpy(currentCriticalStage, "ens160_read", sizeof(currentCriticalStage) - 1);
+  currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
+  if (!isnan(pmsTempC) && !isnan(pmsHum)) {
+    ENS160.setTempAndHum(/*temperature=*/pmsTempC, /*humidity=*/pmsHum);
+  }
+  ens160StatusRaw = ENS160.getENS160Status();
+  ens160Aqi = ENS160.getAQI();
+  ens160Tvoc = ENS160.getTVOC();
+  ens160Eco2 = ENS160.getECO2();
+
+  bool statusOk = (ens160StatusRaw <= 0x02);
+  bool valuesOk =
+      (ens160Aqi >= 1U && ens160Aqi <= 5U && ens160Tvoc <= 65000U &&
+       ens160Eco2 >= 400U && ens160Eco2 <= 65000U);
+  ens160DataValid = statusOk && valuesOk;
+
+  if (ens160DataValid) {
+    ens160InvalidCount = 0;
+    return;
+  }
+
+  if (ens160StatusRaw == 0x01 || ens160StatusRaw == 0x02) {
+    return;
+  }
+
+  ens160InvalidCount++;
+  logError("ENS160_INVALID", "updateEns160State",
+           "Invalid ENS160 status/data detected");
+  if (ens160InvalidCount >= ENS160_INVALID_REINIT_THRESHOLD) {
+    ens160InvalidCount = 0;
+    recoverI2CBus("ENS160 invalid threshold");
+  }
+}
+
+void networkRestartWatchdogTick() {
+  const uint32_t now = millis();
+  if (now - lastNetworkWatchdogCheckMs < NETWORK_WATCHDOG_CHECK_MS) {
+    return;
+  }
+  lastNetworkWatchdogCheckMs = now;
+
+  if (wifiModeActive) {
+    networkDownSinceMs = 0;
+    return;
+  }
+
+  bool netOk = modem.isNetworkConnected();
+  bool pdpOk = modem.isGprsConnected();
+  bool cellularOk = netOk && pdpOk;
+  hasRed = cellularOk;
+
+  if (cellularOk) {
+    if (networkDownSinceMs != 0) {
+      Serial.println("[NET][WD] Connectivity restored");
+    }
+    networkDownSinceMs = 0;
+    return;
+  }
+
+  if (networkDownSinceMs == 0) {
+    networkDownSinceMs = now;
+    Serial.println("[NET][WD] Connectivity lost, starting 2h timer");
+    return;
+  }
+
+  uint32_t downMs = now - networkDownSinceMs;
+  Serial.printf("[NET][WD] Connectivity down for %lu s\n",
+                (unsigned long)(downMs / 1000UL));
+
+  if (downMs >= 600000UL &&
+      modemRecoveryAttempts < MAX_MODEM_RECOVERY_ATTEMPTS) {
+    modemRecoveryAttempts++;
+    logError("MODEM_RECOVERY", "networkRestartWatchdogTick",
+             "Attempting modem recovery after prolonged connectivity loss");
+    if (initModemWithRecovery()) {
+      networkDownSinceMs = 0;
+      modemRecoveryAttempts = 0;
+      return;
+    }
+  }
+
+  if (downMs >= NETWORK_RESTART_INTERVAL_MS) {
+    logError("NET_WATCHDOG_RESTART", "networkRestartWatchdogTick",
+             "No cellular connectivity for 2h");
+    Serial.println("[NET][WD] Restarting after 2h without connectivity");
+    delay(100);
+    ESP.restart();
+  }
+}
+
+void refreshHealthLog() {
+  const uint32_t now = millis();
+  if (now - lastHealthLogMs < HEALTH_LOG_INTERVAL_MS) {
+    return;
+  }
+  lastHealthLogMs = now;
+
+  char msg[128];
+  snprintf(msg, sizeof(msg),
+           "heap=%lu minHeap=%lu stage=%s net=%d pdp=%d ens=%u/%u/%u status=%u",
+           (unsigned long)ESP.getFreeHeap(),
+           (unsigned long)ESP.getMinFreeHeap(), currentCriticalStage,
+           modem.isNetworkConnected() ? 1 : 0, modem.isGprsConnected() ? 1 : 0,
+           (unsigned int)ens160Aqi, (unsigned int)ens160Tvoc,
+           (unsigned int)ens160Eco2, (unsigned int)ens160StatusRaw);
+  logError("HEALTH", "refreshHealthLog", msg);
+}
+
 // -------------------- Telemetry Tx --------------------
 // NOTA DE INTEGRACION:
 // - "streaming" controla transmisión HTTP.
@@ -488,8 +771,8 @@ bool sendCurrentMeasurement() {
   }
 
   String v1 = GasOK ? safeFloatStr(gas.readGasConcentrationPPM()) : missingUrlValue();
-  String v2 = ENS160OK ? safeIntStr(ENS160.getTVOC()) : missingUrlValue();
-  String v3 = ENS160OK ? safeIntStr(ENS160.getECO2()) : missingUrlValue();
+  String v2 = (ENS160OK && ens160DataValid) ? safeIntStr(ens160Tvoc) : missingUrlValue();
+  String v3 = (ENS160OK && ens160DataValid) ? safeIntStr(ens160Eco2) : missingUrlValue();
   String v4 = safeGpsStr(gpsLat);
   String v5 = safeGpsStr(gpsLon);
   String v6 = safeIntStr(csq);
@@ -579,6 +862,8 @@ void handleButtonLogic() {
 void setup() {
   delay(300);
   Serial.begin(115200);
+  esp_task_wdt_init(WDT_TIMEOUT, true);
+  esp_task_wdt_add(NULL);
   // pinMode(POWER_PIN, OUTPUT);//esto no se usa ahora
   // digitalWrite(POWER_PIN, HIGH);//para ver con mini madre
 
@@ -617,6 +902,9 @@ void setup() {
   u8g2.setDisplayRotation(config.rotateDisplay ? U8G2_R0 : U8G2_R2);
   u8g2.setFont(u8g2_font_5x7_tf);
   lastOledActivity = millis();
+  Wire.begin();
+  Wire.setTimeOut(50);
+  Wire.setClock(100000);
 
   // Animation
   while (logoXOffset < LOGO_FINAL_X || hiriXOffset > HIRI_FINAL_X ||
@@ -665,6 +953,7 @@ void setup() {
       csvFileName = generateCSVFileName();
       writeCSVHeader();
     }
+    writeErrorLogHeader();
 
     prefs.begin("system", false);
     prefs.putString("csvFile", csvFileName);
@@ -684,68 +973,18 @@ void setup() {
     Serial.println("[SDS198] Active by ID");
   }
 
-  Serial.println("Adafruit SHT4x test");
-  if (! sht4.begin()) {
-    Serial.println("Couldn't find SHT4x");
-    SHT4xOK = false;
-  }else{
-  Serial.println("Found SHT4x sensor");
-  Serial.print("Serial number 0x");
-  Serial.println(sht4.readSerial(), HEX);
-
-  // You can have 3 different precisions, higher precision takes longer
-  sht4.setPrecision(SHT4X_HIGH_PRECISION);
-  switch (sht4.getPrecision()) {
-     case SHT4X_HIGH_PRECISION: 
-       Serial.println("High precision");
-       break;
-     case SHT4X_MED_PRECISION: 
-       Serial.println("Med precision");
-       break;
-     case SHT4X_LOW_PRECISION: 
-       Serial.println("Low precision");
-       break;
+  initI2CSensors();
+  if (SHT4xOK) {
+    Serial.println("[SHT4X] OK");
+    Serial.print("[SHT4X] Serial 0x");
+    Serial.println(sht4.readSerial(), HEX);
   }
-  // You can have 6 different heater settings
-  // higher heat and longer times uses more power
-  // and reads will take longer too!
-  sht4.setHeater(SHT4X_NO_HEATER);
-  // switch (sht4.getHeater()) {
-  //    case SHT4X_NO_HEATER: 
-  //      Serial.println("No heater");
-  //      break;
-  //    case SHT4X_HIGH_HEATER_1S: 
-  //      Serial.println("High heat for 1 second");
-  //      break;
-  //    case SHT4X_HIGH_HEATER_100MS: 
-  //      Serial.println("High heat for 0.1 second");
-  //      break;
-  //    case SHT4X_MED_HEATER_1S: 
-  //      Serial.println("Medium heat for 1 second");
-  //      break;
-  //    case SHT4X_MED_HEATER_100MS: 
-  //      Serial.println("Medium heat for 0.1 second");
-  //      break;
-  //    case SHT4X_LOW_HEATER_1S: 
-  //      Serial.println("Low heat for 1 second");
-  //      break;
-  //    case SHT4X_LOW_HEATER_100MS: 
-  //      Serial.println("Low heat for 0.1 second");
-  //      break;
-  // }
-  SHT4xOK = true;
-  }
-  // SHT31
-  if (!sht31.begin(0x44)) {
-    Serial.println("[SHT31] FAIL");
-    SHT31OK = false;
-  } else {
+  if (SHT31OK) {
     Serial.println("[SHT31] OK");
-    SHT31OK = true;
     u8g2.print(" SHT31:OK");
   }
   if (!gas.begin()) {
-    Serial.println("NO Deivces !");
+    logError("I2C_SENSOR_FAIL", "gas.begin", "Gas sensor not found");
   } else {
     Serial.println("[GAS] OK");
 
@@ -758,22 +997,10 @@ void setup() {
     gas.setTempCompensation(gas.ON);
     GasOK = true;
   }
-  if (NO_ERR != ENS160.begin()) {
-    Serial.println("Communication with device failed, please check connection");
-  } else {
+  if (ENS160OK) {
     Serial.println("ENS OK");
-
     u8g2.print(" ENS160:OK");
     Serial.println("The device is connected successfully!");
-    /**
-     * Set power mode
-     * mode Configurable power mode:
-     *   ENS160_SLEEP_MODE: DEEP SLEEP mode (low power standby)
-     *   ENS160_IDLE_MODE: IDLE mode (low-power)
-     *   ENS160_STANDARD_MODE: STANDARD Gas Sensing Modes
-     */
-    ENS160.setPWRMode(ENS160_STANDARD_MODE);
-    ENS160OK = true;
   }
   u8g2.sendBuffer();
   delay(1000);
@@ -796,52 +1023,14 @@ void setup() {
   digitalWrite(MODEM_DTR, LOW);
 
   oledStatus("MODEM", "Starting...");
-
-  // LED heartbeat during modem startup (visual anti-freeze feedback)
-  bool modemBlinkState = false;
-  int dot = 1;
-  for (int i = 0; i < 3; i++) {
-
-    dot++;
-    while (!modem.testAT(1000)) {
-      Serial.println("[MODEM] Retry...");
-      oledStatus("MODEM", "Retry: ", String(dot));
-      // Blink RGB while retrying modem init
-      modemBlinkState = !modemBlinkState;
-      if (modemBlinkState) {
-        pixels.setPixelColor(0, pixels.Color(0, 0, 80)); // soft blue
-      } else {
-        pixels.setPixelColor(0, pixels.Color(0, 0, 0));
-      }
-      pixels.show();
-
-      digitalWrite(MODEM_PWRKEY, HIGH);
-      delay(300);
-      digitalWrite(MODEM_PWRKEY, LOW);
-      delay(1000);
-    }
+  if (!initModemWithRecovery()) {
+    oledStatus("MODEM", "FATAL", "ESP RESTART");
+    delay(1200);
+    ESP.restart();
   }
-
-  // Solid blue when modem is ready
   pixels.setPixelColor(0, pixels.Color(0, 50, 100));
   pixels.show();
-
   oledStatus("MODEM", "OK");
-
-  // Modem setup
-  atRun("+CEDRXS=0", "OK", "ERROR", 1500);
-  atRun("+CPSMS=0", "OK", "ERROR", 1500);
-
-  // Network
-  oledStatus("NET", "Attach/PDP...");
-  if (!modem.waitForNetwork(60000))
-    oledStatus("NET", "Attach FAIL");
-  else {
-    if (!modem.gprsConnect(apn, gprsUser, gprsPass))
-      oledStatus("NET", "PDP FAIL");
-    else
-      oledStatus("NET", "PDP OK");
-  }
 
   // XTRA
   xtraSupported = detectAndEnableXtra();
@@ -853,10 +1042,6 @@ void setup() {
 
   // GNSS
   gnssBringUp();
-
-  // Watchdog
-  esp_task_wdt_init(WDT_TIMEOUT, true);
-  esp_task_wdt_add(NULL);
 
   // SD Auto Mount
   // Política actual:
@@ -967,20 +1152,25 @@ void loop() {
       if (sht4.getEvent(&humiditySHT4x, &tempSHT4x)) {
         tempsht4x = tempSHT4x.temperature;
         humsht4x = humiditySHT4x.relative_humidity;
+        sht4xFailCount = 0;
         Serial.print("SHT4x Temperature: "); Serial.print(tempsht4x); Serial.println(" degrees C");
         Serial.print("SHT4x Humidity: ");    Serial.print(humsht4x); Serial.println("% rH");
       } else {
         Serial.println("SHT4x Read FAIL");
+        logError("I2C_READ_FAIL", "SHT4X.getEvent", "SHT4x read failed");
+        if (++sht4xFailCount >= SHT4X_FAIL_REINIT_THRESHOLD) {
+          sht4xFailCount = 0;
+          recoverI2CBus("SHT4x repeated read failures");
+        }
       }
     }
 
     // ------------------- ENS160 (Ambient)
-    ENS160.setTempAndHum(/*temperature=*/pmsTempC, /*humidity=*/pmsHum);
-    uint8_t Status = ENS160.getENS160Status();
-    Serial.print("ENS160 status: "); Serial.println(Status);
-    Serial.print("AQI: "); Serial.println(ENS160.getAQI());
-    Serial.print("TVOC: "); Serial.print(ENS160.getTVOC()); Serial.println(" ppb");
-    Serial.print("eCO2: "); Serial.print(ENS160.getECO2()); Serial.println(" ppm");
+    updateEns160State();
+    Serial.print("ENS160 status: "); Serial.println(ens160StatusRaw);
+    Serial.print("AQI: "); Serial.println(ens160Aqi);
+    Serial.print("TVOC: "); Serial.print(ens160Tvoc); Serial.println(" ppb");
+    Serial.print("eCO2: "); Serial.print(ens160Eco2); Serial.println(" ppm");
   }
 
   // First Loop Logic
@@ -1041,6 +1231,9 @@ void loop() {
     lastDisplayUpdate = millis();
     renderDisplay();
   }
+
+  networkRestartWatchdogTick();
+  refreshHealthLog();
 
   // Auto Off
   if (config.oledAutoOff && (millis() - lastOledActivity > config.oledTimeout)) {

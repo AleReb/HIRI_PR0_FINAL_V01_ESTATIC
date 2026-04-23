@@ -71,6 +71,9 @@ extern int SDS198PM100;
 extern uint16_t PM10, PM1;
 extern bool sendCurrentMeasurement();
 extern bool saveCSVData();
+extern uint16_t ens160Tvoc, ens160Eco2;
+extern uint8_t ens160Aqi, ens160StatusRaw;
+extern bool ens160DataValid;
 
 // -------------------- Helper Logic --------------------
 
@@ -517,12 +520,16 @@ void drawFullModeView() {
       u8g2.print(String(SHT4xOK ? "SHT40: " : "SHT31: ") + String(t, 1) + "C / " + String(h, 1) + "%");
       y += 8;
     }
-    if (ENS160OK) {
+    if (ENS160OK && ens160DataValid) {
       u8g2.setCursor(0, y);
-      u8g2.print("AQI:" + String(ENS160.getAQI()) + " TVOC:" + String(ENS160.getTVOC()) + "ppb");
+      u8g2.print("AQI:" + String(ens160Aqi) + " TVOC:" + String(ens160Tvoc) + "ppb");
       y += 8;
       u8g2.setCursor(0, y);
-      u8g2.print("eCO2: " + String(ENS160.getECO2()) + " ppm");
+      u8g2.print("eCO2: " + String(ens160Eco2) + " ppm");
+      y += 8;
+    } else if (ENS160OK) {
+      u8g2.setCursor(0, y);
+      u8g2.print("ENS160 INVALID ST:" + String(ens160StatusRaw));
       y += 8;
     }
     if (GasOK) {

@@ -11,6 +11,7 @@ extern bool hasRed;
 extern float batV;
 extern uint16_t PM25;
 extern SystemConfig config;
+extern char currentCriticalStage[32];
 extern void updatePmLed(float pm25);
 extern void logError(const String &type, const String &ctx, const String &msg);
 extern bool atTick(bool &done, bool &ok);
@@ -30,7 +31,8 @@ const uint32_t PDP_RECONNECT_TIMEOUT_MS = 30000;
 // Incluye control de backoff para evitar bucles de reconexión agresivos.
 bool ensurePdpAndNet() {
   String dummy;
-  (void)sendAtSync("+CGDCONT=1,\"IP\",\"gigsky-02\"", dummy, 2000);
+  String cgdcont = String("+CGDCONT=1,\"IP\",\"") + String(apn) + "\"";
+  (void)sendAtSync(cgdcont, dummy, 2000);
 
   if (!modem.isGprsConnected()) {
     // PROTECCIÓN CONTRA BLOQUEOS: Si hemos fallado muchas veces, esperar antes
@@ -52,6 +54,8 @@ bool ensurePdpAndNet() {
     }
 
     Serial.println("[NET] PDP down, reconnecting...");
+    strncpy(currentCriticalStage, "http_pdp_reconnect", 31);
+    currentCriticalStage[31] = '\0';
     lastPdpReconnectAttempt = millis();
 
     // MINI-LOOP CON WATCHDOG RESET: modem.gprsConnect() puede bloquear 10-60s
@@ -86,6 +90,8 @@ bool ensurePdpAndNet() {
   }
 
   String r;
+  strncpy(currentCriticalStage, "http_netopen", 31);
+  currentCriticalStage[31] = '\0';
   if (!sendAtSync("+NETOPEN?", r, 2000) || r.indexOf("+NETOPEN: 1") < 0) {
     if (!sendAtSync("+NETOPEN", r, 10000)) {
       Serial.println("[NET] NETOPEN FAIL");
@@ -156,6 +162,8 @@ bool httpGet_webhook(const String &fullUrl) {
   pixels.show();
 
   atBegin("+HTTPACTION=0", "+HTTPACTION:", "ERROR", 90000);
+  strncpy(currentCriticalStage, "http_action", 31);
+  currentCriticalStage[31] = '\0';
   int httpCode = -1, dataLen = -1;
   {
     bool actionDone = false, actionOk = false;

@@ -12,6 +12,9 @@ extern bool rtcOK, SDOK, loggingEnabled, xtraLastOk;
 extern uint32_t sdSaveCounter, sendCounter;
 extern String csvFileName, logFilePath;
 extern uint8_t lastDayLogged;
+extern uint16_t ens160Tvoc, ens160Eco2;
+extern uint8_t ens160Aqi;
+extern bool ens160DataValid;
 // Genera nombre diario de CSV usando prefijo de dispositivo + fecha RTC.
 // Permite rotación por día y continuidad de trazabilidad en terreno.
 String generateCSVFileName() {
@@ -58,8 +61,7 @@ void writeErrorLogHeader() {
     return; // Ya existe
   File f = SD.open(logFilePath.c_str(), FILE_WRITE);
   if (f) {
-    f.println("timestamp,errorType,errorCode,rawResponse,operator,technology,"
-              "signalQuality,registrationStatus,batteryV,uptime_s");
+    f.println("timestamp,type,context,message");
     f.close();
     Serial.println("[SD] Error log header created");
   }
@@ -110,9 +112,9 @@ bool saveCSVData() {
                 String(humsht4x, 2) + "," + rebootReason + "," + 
                 String(SDS198PM100) + "," +
                 (GasOK ? String(gas.readGasConcentrationPPM(), 2) : "0") + "," +
-                (ENS160OK ? String(ENS160.getTVOC()) : "0") + "," +
-                (ENS160OK ? String(ENS160.getECO2()) : "0") + "," +
-                (ENS160OK ? String(ENS160.getAQI()) : "0") + "," +
+                ((ENS160OK && ens160DataValid) ? String(ens160Tvoc) : "0") + "," +
+                ((ENS160OK && ens160DataValid) ? String(ens160Eco2) : "0") + "," +
+                ((ENS160OK && ens160DataValid) ? String(ens160Aqi) : "0") + "," +
                 currentNote;
 
   File f = SD.open(csvFileName, FILE_APPEND);

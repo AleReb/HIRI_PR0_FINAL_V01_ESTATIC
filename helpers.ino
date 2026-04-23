@@ -67,6 +67,42 @@ void checkRebootReason() {
 
 // -------------------- Error Logging --------------------
 void logError(const String &type, const String &ctx, const String &msg) {
+  static String lastType = "";
+  static String lastCtx = "";
+  static uint32_t lastLogMs = 0;
+  static uint8_t suppressedCount = 0;
+  const uint32_t RATE_LIMIT_MS = 5000;
+
+  uint32_t now = millis();
+  if (type == lastType && ctx == lastCtx && (now - lastLogMs) < RATE_LIMIT_MS) {
+    if (suppressedCount < 255) {
+      suppressedCount++;
+    }
+    return;
+  }
+
+  if (suppressedCount > 0 && SDOK) {
+    File sf = SD.open(logFilePath, FILE_APPEND);
+    if (sf) {
+      if (sf.size() == 0) {
+        sf.println("timestamp,type,context,message");
+      }
+      String ts = rtcOK ? rtc.now().timestamp() : String(now);
+      sf.print(ts);
+      sf.print(",");
+      sf.print(lastType);
+      sf.print(",");
+      sf.print(lastCtx);
+      sf.print(",");
+      sf.println("suppressed=" + String(suppressedCount));
+      sf.close();
+    }
+    suppressedCount = 0;
+  }
+
+  lastType = type;
+  lastCtx = ctx;
+  lastLogMs = now;
   Serial.println("[ERROR] " + type + " (" + ctx + "): " + msg);
 
   if (!SDOK)
