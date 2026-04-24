@@ -74,7 +74,7 @@ const byte CMD = 0xCF;
 const byte TAIL = 0xAB;
 
 // Firmware version
-String VERSION = "Pro V0.1.12V";
+String VERSION = "Pro V0.1.13V";
 
 // Global states of sensors and RTC
 bool rtcOK = false;
@@ -155,7 +155,7 @@ String lastSavedCSVLine = ""; // Used in sd_card.ino for OLED display
 File uploadFile;              // Used in wifi.ino for file uploads
 
 String deviceID = "/HIRIPV";
-const char *DEVICE_ID_STR = "10"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
+const char *DEVICE_ID_STR = "7"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
@@ -499,6 +499,7 @@ bool modemWaitForAT(uint32_t totalTimeoutMs) {
   uint32_t start = millis();
   uint32_t attempt = 0;
   bool blinkOn = false;
+  uint8_t dotPhase = 0;
   oledStatus("MODEM", "AT wait...");
   while (millis() - start < totalTimeoutMs) {
     esp_task_wdt_reset();
@@ -507,12 +508,18 @@ bool modemWaitForAT(uint32_t totalTimeoutMs) {
     currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
     blinkOn = !blinkOn;
     modemBlinkBlueStep(blinkOn, 60);
+    dotPhase = (dotPhase % 3) + 1;
+    String dots = ".";
+    if (dotPhase == 2)
+      dots = "..";
+    else if (dotPhase == 3)
+      dots = "...";
     if (modem.testAT(1000)) {
       modemBlinkBlueStep(true, 100);
       return true;
     }
     Serial.printf("[MODEM] testAT retry %lu\n", (unsigned long)attempt);
-    oledStatus("MODEM", "AT wait...", String(attempt));
+    oledStatus("MODEM", "AT wait" + dots, String(attempt));
     delay(300);
   }
   logError("MODEM_AT_TIMEOUT", "modemWaitForAT",
