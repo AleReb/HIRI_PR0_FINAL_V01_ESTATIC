@@ -31,8 +31,9 @@ void loadConfig() {
   config.autostartGpsTimeout = prefs.getUShort("autoGPSTO", 600);
   config.autoDebug = prefs.getBool("autoDbg", true); // false original el false es que esta en modo hiripro modo debug
 
- // System
+  // System
   config.rotateDisplay = prefs.getBool("rotDisp", true); //false originalmente rotado para estas estaciones
+  config.gnssEnabled = prefs.getBool("gnssEn", false);
 
   // GNSS Mode
   config.gnssMode = prefs.getUChar("gnssMode", 15);
@@ -54,6 +55,7 @@ void loadConfig() {
                 config.autostartGpsTimeout);
   Serial.printf("[CONFIG] Auto Debug: %s\n", config.autoDebug ? "YES" : "NO");
   Serial.printf("[CONFIG] Rotate Display: %s\n", config.rotateDisplay ? "YES" : "NO");
+  Serial.printf("[CONFIG] GNSS enabled: %s\n", config.gnssEnabled ? "YES" : "NO");
   Serial.printf("[CONFIG] GNSS mode: %u\n", config.gnssMode);
 
 }
@@ -86,6 +88,7 @@ void saveConfig() {
 
   // System
   prefs.putBool("rotDisp", config.rotateDisplay);
+  prefs.putBool("gnssEn", config.gnssEnabled);
 
   // GNSS Mode
   prefs.putUChar("gnssMode", config.gnssMode);
@@ -116,6 +119,7 @@ void configSetDefaults() {
   config.autoDebug = true;         // SI autodebug
 
   config.rotateDisplay = false;     // Display NO rotado
+  config.gnssEnabled = false;       // GNSS apagado por defecto
 
   config.gnssMode = 15; // Todas las constelaciones (default)
 
@@ -159,6 +163,7 @@ void printConfig() {
   Serial.printf("  Rotate display:     %s\n", config.rotateDisplay ? "YES" : "NO");
 
   Serial.println("\n[GNSS Configuration]");
+  Serial.printf("  Enabled:            %s\n", config.gnssEnabled ? "YES" : "NO");
   Serial.printf("  Mode:               %u ", config.gnssMode);
   switch (config.gnssMode) {
   case 1:

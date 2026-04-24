@@ -111,6 +111,7 @@ void processSerialCommand() {
     Serial.println(F("  set led on/off      - Enable NeoPixel"));
     Serial.println(F("  set ledbright 10/25/50/100 - LED brightness (%)"));
     Serial.println(F("  set autostart on/off - Autostart streaming on boot"));
+    Serial.println(F("  set gnss on/off     - Enable or disable GNSS subsystem"));
     Serial.println(F("  set autowaitgps on/off - Wait GPS fix before start"));
     Serial.println(
         F("  set autogpsto 60-900 - GPS timeout (60s-15min, default: 600s)"));
@@ -496,6 +497,16 @@ void processSerialCommand() {
       config.autostart = false;
       saveConfig();
       Serial.println("[CONFIG] Autostart: OFF");
+    }
+
+    else if (param == "gnss on") {
+      config.gnssEnabled = true;
+      saveConfig();
+      Serial.println("[CONFIG] GNSS: ON (requires reboot)");
+    } else if (param == "gnss off") {
+      config.gnssEnabled = false;
+      saveConfig();
+      Serial.println("[CONFIG] GNSS: OFF (requires reboot)");
     }
 
     // Autostart wait GPS

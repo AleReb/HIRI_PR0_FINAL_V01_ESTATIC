@@ -36,6 +36,7 @@ extern TinyGsm modem;
 extern bool rtcOK;
 extern bool SDOK;
 extern bool wifiModeActive;
+extern bool hasRed;
 extern bool loggingEnabled;
 extern bool streaming;
 extern bool haveFix;
@@ -48,6 +49,7 @@ extern uint32_t lastHttpActivityMs;
 extern uint32_t lastSdActivityMs;
 extern bool lastHttpOk;
 extern bool lastSdOk;
+extern bool hasHttpAttempted;
 extern uint16_t PM25;
 extern float pmsTempC;
 extern float pmsHum;
@@ -74,6 +76,7 @@ extern bool saveCSVData();
 extern uint16_t ens160Tvoc, ens160Eco2;
 extern uint8_t ens160Aqi, ens160StatusRaw;
 extern bool ens160DataValid;
+extern bool httpBackoffActive;
 
 // -------------------- Helper Logic --------------------
 
@@ -372,7 +375,10 @@ void drawHeader() {
   drawActivityDot(57, loggingEnabled, sdActive, lastSdOk);
 
   // Satellite icon + satélites (movido +10 px para evitar solape)
-  if (haveFix && gpsStatus == "Fix") {
+  if (!config.gnssEnabled) {
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawStr(68, 9, "N");
+  } else if (haveFix && gpsStatus == "Fix") {
     u8g2.drawXBMP(63, 1, 8, 8, satelit_bitmap);
     u8g2.setFont(u8g2_font_5x7_tf);
     u8g2.setCursor(73, 9);
@@ -385,11 +391,18 @@ void drawHeader() {
     u8g2.drawGlyph(68, 9, 0x0118);
   }
 
-  // Signal (movido +10 px para evitar solape)
-  bool networkError = (csq == 99);
-  if (networkError) {
+  // Signal / HTTP state (movido +10 px para evitar solape)
+  bool networkTxReady = (csq != 99) && hasRed &&
+                        (registrationStatus == "Registered") &&
+                        !httpBackoffActive;
+  bool networkWarn = !networkTxReady || (hasHttpAttempted && !lastHttpOk);
+  if (networkWarn) {
     u8g2.setFont(u8g2_font_open_iconic_all_1x_t);
     u8g2.drawGlyph(84, 9, 0x0118);
+    if (httpBackoffActive) {
+      u8g2.setFont(u8g2_font_4x6_tf);
+      u8g2.drawStr(92, 9, "P");
+    }
   } else {
     u8g2.setFont(u8g2_font_open_iconic_all_1x_t);
     u8g2.drawGlyph(84, 9, 0x00FD);
@@ -474,12 +487,14 @@ void drawMenuItemWithIcon(uint8_t depth, uint8_t idx) {
 // Vista DEBUG con rotación de pantallas.
 void drawFullModeView() {
   u8g2.setFont(u8g2_font_5x7_tf);
+  uint8_t debugScreenCount = config.gnssEnabled ? 4 : 3;
+  uint8_t screenIdx = config.gnssEnabled ? debugScreenIndex : (debugScreenIndex + 1);
   
   // Cabecera de la pantalla actual
   u8g2.setCursor(110, 16);
-  u8g2.print(String(debugScreenIndex + 1) + "/4");
+  u8g2.print(String(debugScreenIndex + 1) + "/" + String(debugScreenCount));
 
-  if (debugScreenIndex == 0) { // --- SCREEN 0: GPS & TIME ---
+  if (screenIdx == 0) { // --- SCREEN 0: GPS & TIME ---
     u8g2.drawStr(0, 16, "DEBUG: GPS & TIME");
     u8g2.setCursor(0, 26);
     u8g2.print("Lat:" + gpsLat);
@@ -495,7 +510,7 @@ void drawFullModeView() {
     snprintf(buf, sizeof(buf), "%02d/%02d/%04d %02d:%02d", now.day(), now.month(), now.year(), now.hour(), now.minute());
     u8g2.drawStr(0, 58, buf);
 
-  } else if (debugScreenIndex == 1) { // --- SCREEN 1: PM (AIR QUALITY) ---
+  } else if (screenIdx == 1) { // --- SCREEN 1: PM (AIR QUALITY) ---
     u8g2.drawStr(0, 16, "DEBUG: AIR QUALITY (PM)");
     u8g2.setCursor(0, 26);
     u8g2.print("PM 1.0:  " + String(PM1) + " ug/m3");
@@ -510,7 +525,7 @@ void drawFullModeView() {
     u8g2.setCursor(0, 58);
     u8g2.print("PMS T/H: " + String(pmsTempC, 1) + "C / " + String(pmsHum, 1) + "%");
 
-  } else if (debugScreenIndex == 2) { // --- SCREEN 2: ENV & GAS ---
+  } else if (screenIdx == 2) { // --- SCREEN 2: ENV & GAS ---
     u8g2.drawStr(0, 16, "DEBUG: ENV & GAS");
     int y = 26;
     if (SHT4xOK || SHT31OK) {
@@ -537,7 +552,7 @@ void drawFullModeView() {
       u8g2.print("GAS: " + String(gas.readGasConcentrationPPM(), 2) + " PPM");
     }
 
-  } else if (debugScreenIndex == 3) { // --- SCREEN 3: SYSTEM ---
+  } else if (screenIdx == 3) { // --- SCREEN 3: SYSTEM ---
     u8g2.drawStr(0, 16, "DEBUG: SYSTEM STATUS");
     u8g2.setCursor(0, 26);
     u8g2.print("ID: " + String(DEVICE_ID_STR) + " VER: " + VERSION);
@@ -628,9 +643,10 @@ void renderDisplay() {
 
   // FULL mode (sin menú) - UPDATED TO DEBUG MODE ROTATION
   if (uiFullMode) {
+    uint8_t debugScreenCount = config.gnssEnabled ? 4 : 3;
     if (millis() - lastDebugRotationMs >= DEBUG_ROTATION_INTERVAL_MS) {
       lastDebugRotationMs = millis();
-      debugScreenIndex = (debugScreenIndex + 1) % 4;
+      debugScreenIndex = (debugScreenIndex + 1) % debugScreenCount;
     }
     drawFullModeView();
     u8g2.sendBuffer();
@@ -832,6 +848,7 @@ void ui_btn1_click() {
     //testeo guardar datos tambien 
    // toggleSamplingAction(); en hiri pro para estaciones solo transmision
     bool txOk = sendCurrentMeasurement();
+    hasHttpAttempted = true;
     lastHttpActivityMs = millis();
     lastHttpOk = txOk;
 

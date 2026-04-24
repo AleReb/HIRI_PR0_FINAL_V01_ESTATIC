@@ -1,7 +1,7 @@
 
 
 // -------------------- Safe value helpers --------------------
-static inline String missingUrlValue() { return "-0"; }
+static inline String missingUrlValue() { return "-1"; }
 
 static inline String safeFloatStr(float v) {
   if (isnan(v) || isinf(v))

@@ -287,6 +287,20 @@ bool setGnssAllWithFallback() {
 // Secuencia de encendido GNSS/NMEA y configuración base del receptor.
 // Deja el módulo listo para parseo continuo a 1 Hz.
 void gnssBringUp() {
+  if (!config.gnssEnabled) {
+    Serial.println("[GNSS] Disabled by config");
+    gpsStatus = "Disabled";
+    gpsLat = "N/A";
+    gpsLon = "N/A";
+    gpsDate = "N/A";
+    gpsTime = "N/A";
+    gpsAlt = "N/A";
+    gpsSpeedKmh = "N/A";
+    satellitesStr = "N";
+    hdopStr = "N/A";
+    haveFix = false;
+    return;
+  }
   Serial.println("[GNSS] Bring-up...");
   atRun("+CGPS=0", "OK", "ERROR", 5000);
   atRun("+CGNSSPWR=1", "OK", "ERROR", 2000);
@@ -305,6 +319,8 @@ void gnssBringUp() {
 // Reinicio HOT del motor GNSS conservando más contexto satelital.
 // Se usa como recuperación rápida ante pérdida parcial de fix.
 void gnssHotRestart() {
+  if (!config.gnssEnabled)
+    return;
   Serial.println("[GNSS] HOT restart");
   atRun("+CGPSRST=0", "OK", "ERROR", 3000);
   resetGnssFlagsAfterStart();
@@ -313,6 +329,8 @@ void gnssHotRestart() {
 // Reinicio WARM del GNSS para recuperación más profunda.
 // Se activa cuando no se recupera fix tras período extendido.
 void gnssWarmRestart() {
+  if (!config.gnssEnabled)
+    return;
   Serial.println("[GNSS] WARM restart");
   atRun("+CGPSRST=1", "OK", "ERROR", 3000);
   resetGnssFlagsAfterStart();
@@ -321,6 +339,8 @@ void gnssWarmRestart() {
 // Watchdog de GNSS: decide HOT/WARM restart según tiempo sin fix.
 // Mantiene resiliencia sin bloquear el loop principal.
 void gnssWatchdog() {
+  if (!config.gnssEnabled)
+    return;
   if (haveFix)
     return;
   uint32_t alive = millis() - gnssStartMs;
@@ -336,6 +356,8 @@ void gnssWatchdog() {
 // Calcula e imprime diagnósticos periódicos de salud GNSS/NMEA.
 // Incluye tasa de tramas, edad de fix y métricas GSA/GSV.
 void gnssDiagTick() {
+  if (!config.gnssEnabled)
+    return;
   const uint32_t now = millis();
 
   // Calcular tasa NMEA cada 1s
@@ -396,6 +418,8 @@ void gnssDiagTick() {
 // Ejecuta consultas AT de debug GNSS en máquina de estados no bloqueante.
 // Permite inspección continua sin romper timing del firmware.
 void gnssDebugPollAsync() {
+  if (!config.gnssEnabled)
+    return;
   const uint32_t PERIOD_MS = 5000;
   if (millis() < gnssDbgNextAt)
     return;
@@ -444,6 +468,8 @@ void gnssDebugPollAsync() {
 // Detecta soporte XTRA (A-GNSS) y lo habilita en el módem.
 // Mejora tiempo de primer fix cuando la red lo permite.
 bool detectAndEnableXtra() {
+  if (!config.gnssEnabled)
+    return false;
   String r;
   if (!sendAtSync("+CGPSXE=?", r, 2000)) {
     Serial.println("[XTRA] Not supported");
@@ -477,6 +503,8 @@ bool downloadXtraOnce() {
 // Refresca XTRA de forma periódica según ventana configurada.
 // Evita descargas innecesarias y conserva recursos de red.
 void downloadXtraIfDue() {
+  if (!config.gnssEnabled)
+    return;
   if (!xtraSupported)
     return;
   if (millis() - lastXtraDownload < XTRA_REFRESH_MS)

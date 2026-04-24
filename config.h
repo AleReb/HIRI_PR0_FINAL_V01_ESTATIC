@@ -68,12 +68,14 @@ struct SystemConfig {
   // Autostart
   bool autostart; // Iniciar streaming/logging al encender (default: false)
   bool autostartWaitGps; // Esperar GPS fix antes de iniciar (default: false)
-  uint16_t
-      autostartGpsTimeout; // Timeout GPS en segundos (default: 600 = 10min)
+  uint16_t  autostartGpsTimeout; // Timeout GPS en segundos (default: 600 = 10min)
   bool autoDebug; // Iniciar automáticamente en modo debug (default: false)
 
   // System
   bool rotateDisplay; // Rotar display 180° (default: false)
+
+  // GNSS Power
+  bool gnssEnabled; // Habilita GNSS completo y su recuperacion automatica
 
   // GNSS Mode
   uint8_t gnssMode; // Modo GNSS: 1=GPS, 3=GPS+GLO, 5=GPS+BDS, 7=GPS+GLO+BDS,

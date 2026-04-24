@@ -27,7 +27,7 @@
  *   16 SHT temperatura
  *   17 SHT humedad
  *
- * Los datos faltantes o invalidos se envian como "-0" para evitar romper la URL.
+ * Los datos faltantes o invalidos se envian como "-1" para evitar romper la URL.
  */
 // --------------------LIBRARY SENSORS, DEFINES & GLOBALS --------------------
 #include "config.h"
@@ -74,7 +74,7 @@ const byte CMD = 0xCF;
 const byte TAIL = 0xAB;
 
 // Firmware version
-String VERSION = "Pro V0.1.6V";
+String VERSION = "Pro V0.1.12V";
 
 // Global states of sensors and RTC
 bool rtcOK = false;
@@ -149,13 +149,13 @@ const uint32_t DEBUG_ROTATION_INTERVAL_MS = 10000;
 String csvFileName = "";
 String logFilePath = "";
 String failedTxPath = "";
-String currentNote = "8"; // Global note for one-shot logging
+String currentNote = "9"; // Global note for one-shot logging
 // Variables moved to main for centralization
 String lastSavedCSVLine = ""; // Used in sd_card.ino for OLED display
 File uploadFile;              // Used in wifi.ino for file uploads
 
 String deviceID = "/HIRIPV";
-const char *DEVICE_ID_STR = "9"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
+const char *DEVICE_ID_STR = "10"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
@@ -179,6 +179,8 @@ uint32_t lastHttpActivityMs = 0;
 uint32_t lastSdActivityMs = 0;
 bool lastHttpOk = false;
 bool lastSdOk = false;
+bool hasHttpAttempted = false;
+bool bootHttpAttemptPending = true;
 uint8_t lastDayLogged = 0;
 bool wasStreamingBeforeBoot = false;
 
@@ -213,10 +215,15 @@ const uint32_t MODEM_BOOT_SETTLE_MS = 3000UL;
 const uint32_t HEALTH_LOG_INTERVAL_MS = 300000UL;
 const uint8_t ENS160_INVALID_REINIT_THRESHOLD = 3;
 const uint8_t SHT4X_FAIL_REINIT_THRESHOLD = 3;
+const uint8_t HTTP_FAIL_MAX_CONSECUTIVE = 6;
+const uint32_t HTTP_RETRY_BACKOFF_MS = 60UL * 60UL * 1000UL;
 uint32_t networkDownSinceMs = 0;
 uint32_t lastNetworkWatchdogCheckMs = 0;
 uint8_t modemRecoveryAttempts = 0;
 uint32_t lastHealthLogMs = 0;
+uint8_t httpConsecutiveFailCount = 0;
+bool httpBackoffActive = false;
+uint32_t httpBackoffUntilMs = 0;
 uint8_t ens160InvalidCount = 0;
 uint8_t sht4xFailCount = 0;
 uint8_t ens160StatusRaw = 0;
@@ -328,11 +335,17 @@ void handleButtonLogic(); // Renamed from dispatchButtonFlags
 void showMessage(const char *msg); // From ui.ino
 extern bool uiFullMode; // From ui.ino
 bool initModemWithRecovery();
+void modemHardPowerOffSequence();
 void modemColdBootSequence();
 bool modemWaitForAT(uint32_t totalTimeoutMs);
+void modemBlinkBlueStep(bool on, uint8_t level = 80);
 bool modemInitAttempt();
 void networkRestartWatchdogTick();
 void refreshHealthLog();
+void modemPowerOffForReset();
+bool recoverModemForHttpFailures();
+void httpBackoffTick();
+void handleHttpFailureState(const char *reason);
 void recoverI2CBus(const char *reason);
 void initI2CSensors();
 void updateEns160State();
@@ -485,15 +498,21 @@ void updateNetworkInfo() {
 bool modemWaitForAT(uint32_t totalTimeoutMs) {
   uint32_t start = millis();
   uint32_t attempt = 0;
+  bool blinkOn = false;
+  oledStatus("MODEM", "AT wait...");
   while (millis() - start < totalTimeoutMs) {
     esp_task_wdt_reset();
     attempt++;
     strncpy(currentCriticalStage, "modem_testAT", sizeof(currentCriticalStage) - 1);
     currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
+    blinkOn = !blinkOn;
+    modemBlinkBlueStep(blinkOn, 60);
     if (modem.testAT(1000)) {
+      modemBlinkBlueStep(true, 100);
       return true;
     }
     Serial.printf("[MODEM] testAT retry %lu\n", (unsigned long)attempt);
+    oledStatus("MODEM", "AT wait...", String(attempt));
     delay(300);
   }
   logError("MODEM_AT_TIMEOUT", "modemWaitForAT",
@@ -501,21 +520,71 @@ bool modemWaitForAT(uint32_t totalTimeoutMs) {
   return false;
 }
 
-void modemColdBootSequence() {
-  strncpy(currentCriticalStage, "modem_cold_boot",
+void modemBlinkBlueStep(bool on, uint8_t level) {
+  pixels.setPixelColor(0, on ? pixels.Color(0, 0, level) : pixels.Color(0, 0, 0));
+  pixels.show();
+}
+
+void modemHardPowerOffSequence() {
+  strncpy(currentCriticalStage, "modem_poweroff",
           sizeof(currentCriticalStage) - 1);
   currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
-
+  oledStatus("MODEM", "Power OFF");
   pinMode(MODEM_PWRKEY, OUTPUT);
   pinMode(MODEM_FLIGHT, OUTPUT);
   pinMode(MODEM_DTR, OUTPUT);
 
   digitalWrite(MODEM_FLIGHT, HIGH);
   digitalWrite(MODEM_DTR, LOW);
+  modemBlinkBlueStep(true, 40);
   digitalWrite(MODEM_PWRKEY, HIGH);
+  delay(250);
+  modemBlinkBlueStep(false, 40);
+  delay(250);
+  modemBlinkBlueStep(true, 40);
+  delay(250);
+  modemBlinkBlueStep(false, 40);
+  delay(250);
+  delay(1800);
+  digitalWrite(MODEM_PWRKEY, LOW);
+  modemBlinkBlueStep(true, 40);
+  delay(250);
+  modemBlinkBlueStep(false, 40);
+  delay(2500);
+  modemBlinkBlueStep(false, 40);
+}
+
+void modemColdBootSequence() {
+  // Always force the modem fully off first so boot/recovery starts from a known state.
+  modemHardPowerOffSequence();
+
+  strncpy(currentCriticalStage, "modem_cold_boot",
+          sizeof(currentCriticalStage) - 1);
+  currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
+  oledStatus("MODEM", "Cold boot");
+  digitalWrite(MODEM_FLIGHT, HIGH);
+  digitalWrite(MODEM_DTR, LOW);
+  modemBlinkBlueStep(true, 100);
+  digitalWrite(MODEM_PWRKEY, HIGH);
+  delay(200);
+  modemBlinkBlueStep(false, 100);
+  delay(200);
+  modemBlinkBlueStep(true, 100);
+  delay(200);
+  modemBlinkBlueStep(false, 100);
+  delay(200);
+  modemBlinkBlueStep(true, 100);
   delay(1200);
   digitalWrite(MODEM_PWRKEY, LOW);
+  oledStatus("MODEM", "Boot settle");
+  modemBlinkBlueStep(false, 100);
+  delay(250);
+  modemBlinkBlueStep(true, 100);
+  delay(250);
+  modemBlinkBlueStep(false, 100);
+  delay(250);
   delay(MODEM_BOOT_SETTLE_MS);
+  modemBlinkBlueStep(true, 100);
 }
 
 bool modemInitAttempt() {
@@ -735,6 +804,74 @@ void refreshHealthLog() {
   logError("HEALTH", "refreshHealthLog", msg);
 }
 
+void modemPowerOffForReset() {
+  Serial.println("[MODEM] Powering off before ESP restart");
+
+  bool offOk = modem.poweroff();
+  if (!offOk) {
+    logError("MODEM_POWEROFF_FAIL", "modemPowerOffForReset",
+             "TinyGSM poweroff failed, forcing hard shutdown by pins");
+  }
+
+  Serial.println("[MODEM] Forcing hard shutdown by pins");
+  modemHardPowerOffSequence();
+}
+
+bool recoverModemForHttpFailures() {
+  logError("HTTP_MODEM_RECOVERY", "recoverModemForHttpFailures",
+           "Starting hard modem recovery after consecutive HTTP failures");
+  Serial.println("[HTTP][WD] Starting hard modem recovery");
+  modemPowerOffForReset();
+  delay(500);
+  hasRed = false;
+  return initModemWithRecovery();
+}
+
+void httpBackoffTick() {
+  if (!httpBackoffActive) {
+    return;
+  }
+
+  const uint32_t now = millis();
+  if ((int32_t)(now - httpBackoffUntilMs) < 0) {
+    return;
+  }
+
+  httpBackoffActive = false;
+  httpBackoffUntilMs = 0;
+  httpConsecutiveFailCount = 0;
+  logError("HTTP_BACKOFF_END", "httpBackoffTick",
+           "HTTP backoff ended, allowing transmissions again");
+  Serial.println("[HTTP][BACKOFF] 1h elapsed, HTTP retries re-enabled");
+}
+
+void handleHttpFailureState(const char *reason) {
+  if (httpConsecutiveFailCount < 255) {
+    httpConsecutiveFailCount++;
+  }
+
+  if (httpConsecutiveFailCount < HTTP_FAIL_MAX_CONSECUTIVE) {
+    return;
+  }
+
+  char msg[128];
+  snprintf(msg, sizeof(msg), "HTTP failed %u consecutive times (%s)",
+           (unsigned int)httpConsecutiveFailCount, reason);
+  logError("HTTP_FAIL_STREAK", "handleHttpFailureState", msg);
+
+  if (recoverModemForHttpFailures()) {
+    Serial.println("[HTTP][WD] Modem recovered, HTTP retries continue");
+    httpConsecutiveFailCount = 0;
+    return;
+  }
+
+  httpBackoffActive = true;
+  httpBackoffUntilMs = millis() + HTTP_RETRY_BACKOFF_MS;
+  logError("HTTP_BACKOFF_START", "handleHttpFailureState",
+           "Modem recovery failed, pausing HTTP for 1 hour");
+  Serial.println("[HTTP][BACKOFF] Pausing HTTP for 1 hour");
+}
+
 // -------------------- Telemetry Tx --------------------
 // NOTA DE INTEGRACION:
 // - "streaming" controla transmisión HTTP.
@@ -758,6 +895,7 @@ String getIdsSensores(const String& deviceId) {
   if (deviceId == "5") return "1079,1080,1080,1081,1081,1081,1081,1081,1082,1083,1083,1083,1083,1083,1084,1085,1085";
   if (deviceId == "6") return "1086,1087,1087,1088,1088,1088,1088,1088,1089,1090,1090,1090,1090,1090,1091,1092,1092";
   if (deviceId == "7") return "1093,1094,1094,1095,1095,1095,1095,1095,1096,1097,1097,1097,1097,1097,1098,1099,1099";
+  if (deviceId == "8") return "1100,1101,1101,1102,1102,1102,1102,1102,1103,1104,1104,1104,1104,1104,1105,1106,1106";
   if (deviceId == "9") return "1107,1108,1108,1109,1109,1109,1109,1109,1110,1111,1111,1111,1111,1111,1112,1113,1113";
   if (deviceId == "10") return "1114,1115,1115,1116,1116,1116,1116,1116,1117,1118,1118,1118,1118,1118,1119,1120,1120";
   return ""; 
@@ -776,7 +914,7 @@ bool sendCurrentMeasurement() {
   String v4 = safeGpsStr(gpsLat);
   String v5 = safeGpsStr(gpsLon);
   String v6 = safeIntStr(csq);
-  String v7 = gpsSpeedKmh.length() ? gpsSpeedKmh : missingUrlValue();
+  String v7 = safeGpsStr(gpsSpeedKmh);
   String v8 = safeSatsStr(satellitesStr);
   String v9 = safeFloatStr(batV);
   String v10 = isnan(pmsTempC) ? missingUrlValue() : safeFloatStr(pmsTempC);
@@ -800,12 +938,15 @@ bool sendCurrentMeasurement() {
   Serial.println("[HTTP] GET " + fullUrl);
   if (httpGet_webhook(fullUrl)) {
     sendCounter++;
+    httpConsecutiveFailCount = 0;
     prefs.begin("system", false);
     prefs.putUInt("sendCnt", sendCounter);
     prefs.end();
     Serial.println("[HTTP] OK");
     return true;
   }
+
+  handleHttpFailureState("http_send_fail");
 
   saveFailedTransmission(fullUrl, "HTTP_FAIL");
   Serial.println("[HTTP] FAIL");
@@ -880,6 +1021,9 @@ void setup() {
   csvFileName = prefs.getString("csvFile", "");
   wasStreamingBeforeBoot = prefs.getBool("streaming", false);
   prefs.end();
+  httpConsecutiveFailCount = 0;
+  httpBackoffActive = false;
+  httpBackoffUntilMs = 0;
 
   loadConfig();
   if (!config.sdAutoMount || !config.autoDebug) {
@@ -918,14 +1062,14 @@ void setup() {
     drawAnimation();
     delay(20);
   }
-
+ 
   // Show Version
   u8g2.setFont(u8g2_font_5x7_tf);
   u8g2.drawStr(58, 9, VERSION.c_str());
   u8g2.setCursor(0, 55);
   u8g2.print("ID:" + String(DEVICE_ID_STR));
   u8g2.sendBuffer();
-
+ delay(2000);
   // PMS & SDS198
   pms.begin(9600);
   Serial2.begin(9600, SERIAL_8N1, Serial2RX_PIN,Serial2TX_PIN); // SDS198 en este caso pero tambien hay otros
@@ -965,7 +1109,7 @@ void setup() {
     Serial.println("[BOOT][SD][ERR] SD auto-mount failed");
   }
 
-  // SDS198 Check (Basic Serial2 verify)
+  // SDS198 Check (Basic Serial2 verify) legacy
   // Nota: SDS198 no tiene begin() que devuelva bool, asumimos OK si el ID es "06" 
   // o si detectamos tramas mas adelante. Por ahora lo activamos por ID o multisensor.
   if (String(DEVICE_ID_STR) == "06" || String(DEVICE_ID_STR) == "01M") {
@@ -1016,14 +1160,7 @@ void setup() {
 
   // MODEM
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
-  pinMode(MODEM_PWRKEY, OUTPUT);
-  digitalWrite(MODEM_PWRKEY, HIGH);
-  delay(300);
-  digitalWrite(MODEM_PWRKEY, LOW);
-  pinMode(MODEM_FLIGHT, OUTPUT);
-  digitalWrite(MODEM_FLIGHT, HIGH);
-  pinMode(MODEM_DTR, OUTPUT);
-  digitalWrite(MODEM_DTR, LOW);
+  modemHardPowerOffSequence();
 
   oledStatus("MODEM", "Starting...");
   if (!initModemWithRecovery()) {
@@ -1036,11 +1173,16 @@ void setup() {
   oledStatus("MODEM", "OK");
 
   // XTRA
-  xtraSupported = detectAndEnableXtra();
-  if (xtraSupported) {
-    oledStatus("XTRA", "Downloading...");
-    xtraLastOk = downloadXtraOnce();
-    lastXtraDownload = millis();
+  if (config.gnssEnabled) {
+    xtraSupported = detectAndEnableXtra();
+    if (xtraSupported) {
+      oledStatus("XTRA", "Downloading...");
+      xtraLastOk = downloadXtraOnce();
+      lastXtraDownload = millis();
+    }
+  } else {
+    xtraSupported = false;
+    xtraLastOk = false;
   }
 
   // GNSS
@@ -1106,7 +1248,7 @@ void loop() {
     // básica si es necesario o dejamos que el buffer maneje lo suyo. En este
     // caso, simplemente NO lo apagamos. El módulo sigue encendido. Si queremos
     // mantener el buffer limpio:
-    if (haveFix) {
+    if (config.gnssEnabled && haveFix) {
       // Opcional: leer y descartar o procesar mínimo.
       // Por ahora, confiamos en que el módulo sigue con energía.
       // Solo llamamos al watchdog del GNSS para que no crea que se colgó si
@@ -1123,9 +1265,11 @@ void loop() {
   }
 
   // Sensors & GNSS
-  gnssWatchdog();
-  gnssDiagTick();
-  gnssDebugPollAsync();
+  if (config.gnssEnabled) {
+    gnssWatchdog();
+    gnssDiagTick();
+    gnssDebugPollAsync();
+  }
 
   // Sensors refresh and print data every 2 seconds
   static uint32_t lastSensorUpdateMs = 0;
@@ -1236,6 +1380,7 @@ void loop() {
   }
 
   networkRestartWatchdogTick();
+  httpBackoffTick();
   refreshHealthLog();
 
   // Auto Off
@@ -1254,13 +1399,50 @@ void loop() {
   }
 
   // Transmisión HTTP (separada de guardado SD)
-  if (streaming && (millis() - lastHttpSend >= config.httpSendPeriod)) {
+  if (streaming && !httpBackoffActive &&
+      (millis() - lastHttpSend >= config.httpSendPeriod)) {
     lastHttpSend = millis();
-    bool txOk = sendCurrentMeasurement();
+    bool networkTxReady = modem.isNetworkConnected() &&
+                          (registrationStatus == "Registered") &&
+                          (csq != 99);
+    bool txOk = false;
+    if (networkTxReady) {
+      txOk = sendCurrentMeasurement();
+    } else {
+      hasRed = false;
+      handleHttpFailureState("network_not_ready");
+      logError("HTTP_SKIP_NO_NETWORK", "loop",
+               "Skipping HTTP send because network/SIM is not ready");
+      Serial.println("[HTTP] SKIP no network/SIM ready");
+    }
+    hasHttpAttempted = true;
     lastHttpActivityMs = millis();
     lastHttpOk = txOk;
   }
 
   // Serial Commands
   processSerialCommand();
+
+  if (bootHttpAttemptPending) {
+    bootHttpAttemptPending = false;
+    if (streaming && !httpBackoffActive) {
+      bool networkTxReady = modem.isNetworkConnected() &&
+                            (registrationStatus == "Registered") &&
+                            (csq != 99);
+      bool txOk = false;
+      if (networkTxReady) {
+        txOk = sendCurrentMeasurement();
+      } else {
+        hasRed = false;
+        handleHttpFailureState("boot_network_not_ready");
+        logError("HTTP_SKIP_NO_NETWORK", "boot_loop",
+                 "Skipping boot HTTP send because network/SIM is not ready");
+        Serial.println("[HTTP][BOOT] SKIP no network/SIM ready");
+      }
+      hasHttpAttempted = true;
+      lastHttpActivityMs = millis();
+      lastHttpOk = txOk;
+      lastHttpSend = millis();
+    }
+  }
 }
