@@ -74,7 +74,7 @@ const byte CMD = 0xCF;
 const byte TAIL = 0xAB;
 
 // Firmware version
-String VERSION = "Pro V0.1.13V";
+String VERSION = "Pro V0.1.15V";
 
 // Global states of sensors and RTC
 bool rtcOK = false;
@@ -155,7 +155,7 @@ String lastSavedCSVLine = ""; // Used in sd_card.ino for OLED display
 File uploadFile;              // Used in wifi.ino for file uploads
 
 String deviceID = "/HIRIPV";
-const char *DEVICE_ID_STR = "7"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
+const char *DEVICE_ID_STR = "10"; // ID del dispositivo actual "1" es el modelo estatico para valpo es la nueva lista
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
@@ -1040,6 +1040,7 @@ void setup() {
     Serial.println("[CONFIG] Station defaults enforced: SD auto-mount and Auto Debug ON");
   }
   applyLEDConfig();
+  Serial.println("[BOOT] Post-config OK");
 
   // Create Log Paths
   logFilePath = String("/errors_h") + String(DEVICE_ID_STR) + String(".csv");
@@ -1048,18 +1049,32 @@ void setup() {
   // SSID
   AP_SSID_STR = "HIRIPRO_" + String(DEVICE_ID_STR);
 
-  // Display Init
-  u8g2.begin();
-  u8g2.setDisplayRotation(config.rotateDisplay ? U8G2_R0 : U8G2_R2);
-  u8g2.setFont(u8g2_font_5x7_tf);
-  lastOledActivity = millis();
+  // Keep SD lines in a passive state during early boot, especially GPIO2 (MISO).
+  pinMode(SD_CS, OUTPUT);
+  digitalWrite(SD_CS, HIGH);
+  pinMode(SD_SCLK, OUTPUT);
+  digitalWrite(SD_SCLK, LOW);
+  pinMode(SD_MOSI, OUTPUT);
+  digitalWrite(SD_MOSI, LOW);
+  pinMode(SD_MISO, INPUT);
+
+  // Display / I2C Init
+  Serial.println("[BOOT] I2C begin");
   Wire.begin();
   Wire.setTimeOut(50);
   Wire.setClock(100000);
+  Serial.println("[BOOT] OLED begin");
+  u8g2.begin();
+  Serial.println("[BOOT] OLED ready");
+  u8g2.setDisplayRotation(config.rotateDisplay ? U8G2_R0 : U8G2_R2);
+  u8g2.setFont(u8g2_font_5x7_tf);
+  lastOledActivity = millis();
 
   // Animation
+  Serial.println("[BOOT] Animation start");
   while (logoXOffset < LOGO_FINAL_X || hiriXOffset > HIRI_FINAL_X ||
          proYOffset > PRO_FINAL_Y) {
+    esp_task_wdt_reset();
     if (logoXOffset < LOGO_FINAL_X)
       logoXOffset += 4;
     if (hiriXOffset > HIRI_FINAL_X)
@@ -1076,13 +1091,16 @@ void setup() {
   u8g2.setCursor(0, 55);
   u8g2.print("ID:" + String(DEVICE_ID_STR));
   u8g2.sendBuffer();
- delay(2000);
+  Serial.println("[BOOT] Splash ready");
+  delay(2000);
   // PMS & SDS198
+  Serial.println("[BOOT] Serial sensors begin");
   pms.begin(9600);
   Serial2.begin(9600, SERIAL_8N1, Serial2RX_PIN,Serial2TX_PIN); // SDS198 en este caso pero tambien hay otros
                                 // sensores pueden usar serial2 Serial2TX_PIN
 
   // RTC
+  Serial.println("[BOOT] RTC begin");
   if (!rtc.begin()) {
     Serial.println("[RTC] FAIL");
     u8g2.setCursor(0, 64);
@@ -1094,28 +1112,6 @@ void setup() {
   }
   u8g2.sendBuffer();
 
-  // SD Auto Mount early in boot so the startup screen reports SD status.
-  spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
-  SDOK = SD.begin(SD_CS, spiSD);
-  if (SDOK) {
-    oledStatus("SD OK", "Card mounted");
-    delay(700);
-    if (!csvFileName.length() || !SD.exists(csvFileName.c_str())) {
-      csvFileName = generateCSVFileName();
-      writeCSVHeader();
-    }
-    writeErrorLogHeader();
-
-    prefs.begin("system", false);
-    prefs.putString("csvFile", csvFileName);
-    prefs.end();
-    Serial.println("[BOOT] SD detected");
-  } else {
-    oledStatus("SD FAIL", "Card not mounted", "Check SD");
-    delay(1200);
-    Serial.println("[BOOT][SD][ERR] SD auto-mount failed");
-  }
-
   // SDS198 Check (Basic Serial2 verify) legacy
   // Nota: SDS198 no tiene begin() que devuelva bool, asumimos OK si el ID es "06" 
   // o si detectamos tramas mas adelante. Por ahora lo activamos por ID o multisensor.
@@ -1124,6 +1120,7 @@ void setup() {
     Serial.println("[SDS198] Active by ID");
   }
 
+  Serial.println("[BOOT] I2C sensors begin");
   initI2CSensors();
   if (SHT4xOK) {
     Serial.println("[SHT4X] OK");
@@ -1166,10 +1163,13 @@ void setup() {
   }
 
   // MODEM
+  Serial.println("[BOOT] MODEM UART begin");
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
+  Serial.println("[BOOT] MODEM hard off");
   modemHardPowerOffSequence();
 
   oledStatus("MODEM", "Starting...");
+  Serial.println("[BOOT] MODEM recovery init");
   if (!initModemWithRecovery()) {
     oledStatus("MODEM", "FATAL", "ESP RESTART");
     delay(1200);
@@ -1177,24 +1177,47 @@ void setup() {
   }
   pixels.setPixelColor(0, pixels.Color(0, 50, 100));
   pixels.show();
-  oledStatus("MODEM", "OK");
 
-  // XTRA
-  if (config.gnssEnabled) {
-    xtraSupported = detectAndEnableXtra();
-    if (xtraSupported) {
-      oledStatus("XTRA", "Downloading...");
-      xtraLastOk = downloadXtraOnce();
-      lastXtraDownload = millis();
+  // SD Auto Mount after the modem boot path, so SD/strap pins do not interfere with restart.
+  Serial.println("[BOOT] SD begin");
+  spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
+  SDOK = SD.begin(SD_CS, spiSD);
+  if (SDOK) {
+    oledStatus("SD OK", "Card mounted");
+    delay(700);
+    if (!csvFileName.length() || !SD.exists(csvFileName.c_str())) {
+      csvFileName = generateCSVFileName();
+      writeCSVHeader();
     }
+    writeErrorLogHeader();
+
+    prefs.begin("system", false);
+    prefs.putString("csvFile", csvFileName);
+    prefs.end();
+    Serial.println("[BOOT] SD detected");
   } else {
-    xtraSupported = false;
-    xtraLastOk = false;
+    oledStatus("SD FAIL", "Card not mounted", "Check SD");
+    delay(1200);
+    Serial.println("[BOOT][SD][ERR] SD auto-mount failed");
   }
+  oledStatus("MODEM", "OK");
+/* sacada la parte gps
+  // // XTRA
+  // if (config.gnssEnabled) {
+  //   xtraSupported = detectAndEnableXtra();
+  //   if (xtraSupported) {
+  //     oledStatus("XTRA", "Downloading...");
+  //     xtraLastOk = downloadXtraOnce();
+  //     lastXtraDownload = millis();
+  //   }
+  // } else {
+  //   xtraSupported = false;
+  //   xtraLastOk = false;
+  // }
 
   // GNSS
-  gnssBringUp();
-
+ // gnssBringUp();
+*/
   // SD Auto Mount
   // Política actual:
   // - Verificar SD al inicio.
