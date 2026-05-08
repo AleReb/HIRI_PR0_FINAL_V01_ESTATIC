@@ -106,29 +106,56 @@ void updatePmLed(float pm25) {
 }
 
 //-------------------------SDS198 non-blocking parser (usando Serial2 UART2)-------------------------
-// Función para leer una trama de datos del sensor.
-bool readFrameSDS198(byte* buf) {
-  // Sincroniza con la cabecera de la trama.
-  int b;
-  while ((b = Serial2.read()) != -1) {
-    if ((byte)b == HEADER) {
-      buf[0] = HEADER;
-      break;
+uint8_t sdsBuf[16];
+uint8_t sdsHead = 0;
+
+// Función para leer una trama de datos del sensor de forma asíncrona.
+bool readFrameSDS198(byte* outFrame) {
+  while (Serial2.available() > 0) {
+    int c = Serial2.read();
+    if (c < 0) break;
+    
+    // Si la cabecera no se ha encontrado y recibimos algo distinto, lo ignoramos
+    if (sdsHead == 0 && (byte)c != HEADER) continue;
+    
+    if (sdsHead < sizeof(sdsBuf)) {
+      sdsBuf[sdsHead++] = (uint8_t)c;
+    } else {
+      memmove(sdsBuf, sdsBuf + 1, sizeof(sdsBuf) - 1);
+      sdsBuf[sizeof(sdsBuf) - 1] = (uint8_t)c;
     }
   }
-  if (b == -1) return false; // No se encontró la cabecera.
-
-  // Lee los 9 bytes restantes de la trama.
-  if (Serial2.readBytes(buf + 1, 9) != 9) return false;
-
-  // Verifica el byte de comando y la cola de la trama.
-  if (buf[1] != CMD || buf[9] != TAIL) return false;
-
-  // Calcula el checksum sumando los bytes de datos (DATA1 a DATA6).
-  byte sum = 0;
-  for (int i = 2; i <= 7; i++) {
-    sum += buf[i];
+  
+  // Buscar trama completa de 10 bytes
+  size_t i = 0;
+  while (sdsHead >= 10 && i + 10 <= sdsHead) {
+    uint8_t *frm = &sdsBuf[i];
+    if (frm[0] == HEADER && frm[1] == CMD && frm[9] == TAIL) {
+      byte sum = 0;
+      for (int k = 2; k <= 7; k++) {
+        sum += frm[k];
+      }
+      if (sum == frm[8]) {
+        // Trama válida encontrada
+        memcpy(outFrame, frm, 10);
+        size_t remain = sdsHead - (i + 10);
+        memmove(sdsBuf, &sdsBuf[i + 10], remain);
+        sdsHead = remain;
+        return true;
+      } else {
+        ++i;
+      }
+    } else {
+      ++i;
+    }
   }
-  // Compara el checksum calculado con el recibido.
-  return (sum == buf[8]);
+  
+  if (i > 0 && i < sdsHead) {
+    memmove(sdsBuf, sdsBuf + i, sdsHead - i);
+    sdsHead -= i;
+  } else if (i >= sdsHead) {
+    sdsHead = 0;
+  }
+  
+  return false;
 }

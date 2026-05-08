@@ -51,10 +51,10 @@ NOTA EN LA PLACA VIEJA COYAHIQUE SOLO ESTA EL BOTON 39
 struct SystemConfig {
   // SD Card
   bool sdAutoMount;      // Montar SD en boot (default: false)
-  uint32_t sdSavePeriod; // Período guardado SD en ms (default: 3000)
+  uint32_t sdSavePeriod; // Período guardado SD en ms (default: 180000)
 
   // HTTP Transmission
-  uint32_t httpSendPeriod; // Período transmisión en ms (default: 3000)
+  uint32_t httpSendPeriod; // Período transmisión en ms (default: 300000)
   uint16_t httpTimeout;    // Timeout HTTP en segundos (default: 15)
 
   // Display OLED
@@ -66,10 +66,10 @@ struct SystemConfig {
   uint8_t ledBrightness; // Brillo LED: 10, 25, 50, 100 (default: 50%)
 
   // Autostart
-  bool autostart; // Iniciar streaming/logging al encender (default: false)
+  bool autostart; // Iniciar streaming/logging al encender (default: true)
   bool autostartWaitGps; // Esperar GPS fix antes de iniciar (default: false)
   uint16_t  autostartGpsTimeout; // Timeout GPS en segundos (default: 600 = 10min)
-  bool autoDebug; // Iniciar automáticamente en modo debug (default: false)
+  bool autoDebug; // Iniciar automáticamente en modo debug (default: true)
 
   // System
   bool rotateDisplay; // Rotar display 180° (default: false)

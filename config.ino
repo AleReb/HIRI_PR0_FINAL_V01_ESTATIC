@@ -11,10 +11,10 @@ void loadConfig() {
 
   // SD
   config.sdAutoMount = prefs.getBool("sdAuto", true);//vamos a cargar la sd automaticamente true
-  config.sdSavePeriod = prefs.getUInt("sdSavePer", 30000);// cambiamos a 30 segundos 
+  config.sdSavePeriod = prefs.getUInt("sdSavePer", 180000); // 3 minutos
 
   // HTTP
-  config.httpSendPeriod = prefs.getUInt("httpPer", 300000);//cambiamos a 5 minutos
+  config.httpSendPeriod = prefs.getUInt("httpPer", 300000); // 5 minutos
   config.httpTimeout = prefs.getUShort("httpTO", 15);
 
   // Display
@@ -26,10 +26,10 @@ void loadConfig() {
   config.ledBrightness = prefs.getUChar("ledBr", 50);
 
   // Autostart
-  config.autostart = prefs.getBool("autoStart", true); //iniciamos guardando en la sd cada 10 segundos y mandando cada 
-  config.autostartWaitGps = prefs.getBool("autoGPS", false); //no esperanos el gps para guardar y mandar
+  config.autostart = prefs.getBool("autoStart", true);
+  config.autostartWaitGps = prefs.getBool("autoGPS", false);
   config.autostartGpsTimeout = prefs.getUShort("autoGPSTO", 600);
-  config.autoDebug = prefs.getBool("autoDbg", true); // false original el false es que esta en modo hiripro modo debug
+  config.autoDebug = prefs.getBool("autoDbg", true);
 
   // System
   config.rotateDisplay = prefs.getBool("rotDisp", true); //false originalmente rotado para estas estaciones
@@ -102,7 +102,7 @@ void saveConfig() {
 //cambiado a modo estacion
 void configSetDefaults() {
   config.sdAutoMount = true; // NO montar en boot por defecto false
-  config.sdSavePeriod = 30000; // 30 segundos
+  config.sdSavePeriod = 180000; // 3 minutos
 
   config.httpSendPeriod = 300000; // 5 minutos 
   config.httpTimeout = 15;      // 15 segundos

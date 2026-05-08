@@ -1,19 +1,42 @@
-
-
 // -------------------- Safe value helpers --------------------
-static inline String missingUrlValue() { return "-1"; }
+String missingUrlValue() { return "-1"; }
 
-static inline String safeFloatStr(float v) {
+String safeFloatStr(float v) {
   if (isnan(v) || isinf(v))
     return missingUrlValue();
   return String(v, 3);
 }
 
-static inline String safeUIntStr(uint32_t v) { return String(v); }
+String safeUIntStr(uint32_t v) { return String(v); }
 
-static inline String safeIntStr(int v) { return String(v); }
+String safeIntStr(int v) { return String(v); }
 
-static inline String safeGpsStr(const String &s) {
+String safeNumberStr(const String &s) {
+  if (s.length() == 0)
+    return missingUrlValue();
+  if (s == "NaN" || s == "N/A")
+    return missingUrlValue();
+
+  bool hasDigit = false;
+  bool hasDot = false;
+  for (size_t i = 0; i < s.length(); ++i) {
+    char c = s[i];
+    if (isDigit(c)) {
+      hasDigit = true;
+      continue;
+    }
+    if (c == '.' && !hasDot) {
+      hasDot = true;
+      continue;
+    }
+    if (c == '-' && i == 0)
+      continue;
+    return missingUrlValue();
+  }
+  return hasDigit ? s : missingUrlValue();
+}
+
+String safeGpsStr(const String &s) {
   if (s.length() == 0)
     return missingUrlValue();
   if (s == "NaN" || s == "N/A")
@@ -21,7 +44,7 @@ static inline String safeGpsStr(const String &s) {
   return s;
 }
 
-static inline String safeSatsStr(const String &s) {
+String safeSatsStr(const String &s) {
   if (s.length() == 0)
     return missingUrlValue();
   for (size_t i = 0; i < s.length(); ++i) {

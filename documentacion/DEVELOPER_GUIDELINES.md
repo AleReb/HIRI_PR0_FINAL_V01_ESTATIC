@@ -1,106 +1,139 @@
 # Developer Guidelines - FirmwarePro
 
-Este archivo define el flujo mínimo obligatorio para mantener trazabilidad y control de versiones en este proyecto.
+Este archivo define el flujo mínimo para mantener trazabilidad y control de versiones en este proyecto.
 
 ---
 
-## 1) Regla obligatoria de versión
+## 1. Regla de versión
 
-**Cada cambio funcional del firmware debe ir acompañado de incremento de versión.**
+Cada cambio funcional del firmware debe ir acompañado de incremento de versión.
 
-- Ubicación actual: variable `VERSION` en `FirmwarePro.ino`
-- Formato recomendado: `Pro V0.0.xx`
+- Ubicación actual: variable `VERSION` en `HIRI_PR0_FINAL_V01_ESTATIC.ino`.
+- Versión actual documentada: **Pro V0.1.15V**.
+- Formato recomendado: `Pro Vx.y.z` o el formato de release usado por el equipo.
 - No mezclar múltiples features grandes sin subir versión.
 
 ---
 
-## 2) Regla obligatoria de changelog
+## 2. Regla de changelog
 
-**Cada cambio funcional debe anotarse en `CAMBIOS.md`** en la misma sesión de trabajo.
+Cada cambio funcional debe anotarse en `documentacion/CAMBIOS.md` en la misma sesión de trabajo.
 
 Debe incluir:
-- Número de versión
-- Fecha
-- Qué cambió
-- Riesgo/impacto (si aplica)
-- Commit relacionado (ideal)
+
+- Número de versión.
+- Fecha.
+- Qué cambió.
+- Riesgo o impacto.
+- Commit relacionado cuando exista.
 
 Si no se actualiza `CAMBIOS.md`, el cambio se considera incompleto.
 
 ---
 
-## 3) Commit de funcionamiento confirmado
+## 3. Documentación sincronizada
 
-Cuando una versión sea validada en hardware real, registrar explícitamente:
-- Commit SHA
-- Resultado de prueba (ej: bootea OK, flashea OK, WiFi OK)
-- Puerto/dispositivo de prueba (si aplica)
+Cuando cambie cualquiera de estos elementos, actualizar documentación:
+
+- Pines o variante de hardware: `README.md`, `MANUAL_TECNICO.md`, `MANUAL_USUARIO.md`.
+- Menú OLED o botones: `menu_structure.md` y `MANUAL_USUARIO.md`.
+- CSV o archivos SD: `README.md`, `MANUAL_TECNICO.md`, `MANUAL_USUARIO.md`.
+- Payload HTTP o `idsSensores`: `README.md`, `MANUAL_TECNICO.md`.
+- Comandos seriales: `MANUAL_USUARIO.md`, `MANUAL_TECNICO.md`.
+- Defaults de configuración: `README.md`, `MANUAL_TECNICO.md`.
+
+---
+
+## 4. Commit de funcionamiento confirmado
+
+Cuando una versión sea validada en hardware real, registrar:
+
+- Commit SHA.
+- Resultado de prueba.
+- Puerto/dispositivo de prueba si aplica.
+- Observaciones de boot, SD, red, HTTP, WiFi y sensores.
 
 Registrar en:
-- `CAMBIOS.md` (recomendado)
-- y/o release notes
+
+- `documentacion/CAMBIOS.md`
+- release notes si existen
 
 ---
 
-## 4) Flujo mínimo recomendado por cambio
+## 5. Flujo recomendado por cambio
 
 1. Editar código.
-2. Subir `VERSION` en `FirmwarePro.ino`.
-3. Actualizar `CAMBIOS.md`.
-4. Compilar con `arduino-cli`.
-5. Flashear en hardware de prueba.
-6. Validar comportamiento crítico.
-7. Commit + push.
-8. Registrar commit funcional confirmado.
+2. Subir `VERSION` en `HIRI_PR0_FINAL_V01_ESTATIC.ino`.
+3. Actualizar `documentacion/CAMBIOS.md`.
+4. Actualizar documentación afectada.
+5. Compilar con Arduino CLI.
+6. Flashear en hardware de prueba.
+7. Validar comportamiento crítico.
+8. Commit y push.
+9. Registrar commit funcional confirmado.
 
 ---
 
-## 5) Comandos estándar
+## 6. Comandos estándar
 
-## Compilar
+Ejecutar desde la raíz del proyecto.
+
+### Compilar
+
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32 FirmwarePro.ino
+arduino-cli compile --fqbn esp32:esp32:esp32 .
 ```
 
-## Flashear (ejemplo COM5)
+### Flashear
+
+Cambiar `COMx` por el puerto real.
+
 ```bash
-arduino-cli upload -p COM5 --fqbn esp32:esp32:esp32 FirmwarePro.ino
+arduino-cli upload -p COMx --fqbn esp32:esp32:esp32 .
 ```
 
 ---
 
-## 6) Criterios de "listo para producción"
+## 7. Criterios de listo para producción
 
 Antes de marcar una versión como estable:
-- Boot estable (sin loop reset)
-- SD operativa (crea y escribe CSV)
-- GNSS operativo
-- HTTP operativo (si aplica)
-- UI navegable
-- WiFi SD operativo (si aplica)
-- Documentación y changelog actualizados
+
+- Boot estable, sin loop de reset.
+- OLED muestra versión e ID correctos.
+- SD monta, crea CSV y escribe filas.
+- CSV coincide con el header documentado.
+- Sensores principales entregan valores o fallan con logs controlados.
+- Módem registra red y obtiene CSQ.
+- HTTP transmite o deja trazabilidad en `failed_h<ID>.csv`.
+- WiFi SD operativo si aplica.
+- GNSS validado si está habilitado para el despliegue.
+- Documentación y changelog actualizados.
 
 ---
 
-## 7) Política de rollback
+## 8. Política de rollback
 
 Si un cambio rompe estabilidad:
-1. Revertir commit problemático.
-2. Confirmar boot + operación mínima.
-3. Documentar incidente en `CAMBIOS.md`.
-4. Reaplicar fix en commit nuevo, nunca sobreescribir historia sin trazabilidad.
+
+1. Revertir el commit problemático o preparar un fix nuevo con trazabilidad.
+2. Confirmar boot y operación mínima.
+3. Documentar incidente en `documentacion/CAMBIOS.md`.
+4. Reaplicar la corrección en un commit nuevo.
+
+No sobrescribir historia si ya fue compartida.
 
 ---
 
-## 8) Convención recomendada de mensajes de commit
+## 9. Convención recomendada de commits
 
-- `feat:` nueva funcionalidad
-- `fix:` corrección
-- `docs:` documentación
-- `refactor:` refactor sin cambio funcional
-- `revert:` reversión controlada
+- `feat:` nueva funcionalidad.
+- `fix:` corrección.
+- `docs:` documentación.
+- `refactor:` refactor sin cambio funcional.
+- `revert:` reversión controlada.
 
-Ejemplo:
-- `feat: WiFi SD exclusivo con captive portal`
-- `fix: evita reset en loop de modo WiFi`
-- `docs: actualiza CAMBIOS y manual técnico`
+Ejemplos:
+
+- `feat: agrega backoff HTTP por fallas consecutivas`
+- `fix: corrige pin de boton para variante valpo`
+- `docs: sincroniza manuales con version Pro V0.1.15V`
