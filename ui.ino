@@ -37,6 +37,7 @@ extern bool rtcOK;
 extern bool SDOK;
 extern bool wifiModeActive;
 extern bool hasRed;
+
 extern bool loggingEnabled;
 extern bool streaming;
 extern bool haveFix;
@@ -64,11 +65,9 @@ extern uint8_t debugScreenIndex;
 extern uint32_t lastDebugRotationMs;
 extern const uint32_t DEBUG_ROTATION_INTERVAL_MS;
 extern bool SHT4xOK, GasOK, ENS160OK;
-extern float tempsht31, humsht31, tempsht4x, humsht4x;
+extern float tempsht4x, humsht4x, gasPpm;
 extern String hdopStr, gpsAlt;
 extern uint32_t sendCounter, sdSaveCounter;
-extern DFRobot_GAS_I2C gas;
-extern DFRobot_ENS160_I2C ENS160;
 extern int SDS198PM100;
 extern uint16_t PM10, PM1;
 extern bool sendCurrentMeasurement();
@@ -88,6 +87,7 @@ extern const char *AP_PASSWORD;
 
 // Pantalla dedicada de control WiFi (estilo RTC)
 void drawWifiModeScreen() {
+  if (!oledOK) return;
   u8g2.clearBuffer();
   drawHeader();
   u8g2.setFont(u8g2_font_6x10_tf);
@@ -446,13 +446,13 @@ void drawSensorValue(uint8_t idx) {
       snprintf(buf, sizeof(buf), "--.-");
     else
       dtostrf(pmsTempC, 0, 1, buf);
-    baseF = "Temperatura (C)";
+    baseF = "Temp PMS (C)";
   } else if (idx == 2) { // Hum
     if (isnan(pmsHum))
       snprintf(buf, sizeof(buf), "--.-");
     else
       dtostrf(pmsHum, 0, 1, buf);
-    baseF = "Humedad (%)";
+    baseF = "Hum PMS (%)";
   }
 
   u8g2.setFont(u8g2_font_logisoso24_tn);
@@ -528,13 +528,13 @@ void drawFullModeView() {
   } else if (screenIdx == 2) { // --- SCREEN 2: ENV & GAS ---
     u8g2.drawStr(0, 16, "DEBUG: ENV & GAS");
     int y = 26;
-    if (SHT4xOK || SHT31OK) {
-      float t = SHT4xOK ? tempsht4x : tempsht31;
-      float h = SHT4xOK ? humsht4x : humsht31;
-      u8g2.setCursor(0, y);
-      u8g2.print(String(SHT4xOK ? "SHT40: " : "SHT31: ") + String(t, 1) + "C / " + String(h, 1) + "%");
-      y += 8;
+    u8g2.setCursor(0, y);
+    if (!isnan(tempsht4x) && !isnan(humsht4x)) {
+      u8g2.print("SHT40: " + String(tempsht4x, 1) + "C / " + String(humsht4x, 1) + "%");
+    } else {
+      u8g2.print("SHT40: --.-C / --.-%");
     }
+    y += 8;
     if (ENS160OK && ens160DataValid) {
       u8g2.setCursor(0, y);
       u8g2.print("AQI:" + String(ens160Aqi) + " TVOC:" + String(ens160Tvoc) + "ppb");
@@ -546,10 +546,16 @@ void drawFullModeView() {
       u8g2.setCursor(0, y);
       u8g2.print("ENS160 INVALID ST:" + String(ens160StatusRaw));
       y += 8;
-    }
-    if (GasOK) {
+    } else {
       u8g2.setCursor(0, y);
-      u8g2.print("GAS: " + String(gas.readGasConcentrationPPM(), 2) + " PPM");
+      u8g2.print("ENS160: OFFLINE");
+      y += 8;
+    }
+    u8g2.setCursor(0, y);
+    if (!isnan(gasPpm)) {
+      u8g2.print("GAS: " + String(gasPpm, 2) + " PPM");
+    } else {
+      u8g2.print("GAS: --.-- PPM");
     }
 
   } else if (screenIdx == 3) { // --- SCREEN 3: SYSTEM ---
@@ -570,6 +576,7 @@ void drawFullModeView() {
 // Render principal de OLED con estado normal y estados transitorios.
 // Integra cabecera, cuerpo de menú y footer en cada refresco.
 void renderDisplay() {
+  if (!oledOK) return;
   u8g2.clearBuffer();
   drawHeader();
 
@@ -873,7 +880,7 @@ void ui_btn1_click() {
 
   menuIndex = (menuIndex + 1) % menus[menuDepth].count;
   lastOledActivity = millis();
-  if (config.oledAutoOff)
+  if (oledOK && config.oledAutoOff)
     u8g2.setPowerSave(0);
   renderDisplay();
 }
@@ -932,7 +939,7 @@ void ui_btn2_click() {
   if (!uiCanHandleAction())
     return;
   lastOledActivity = millis();
-  if (config.oledAutoOff)
+  if (oledOK && config.oledAutoOff)
     u8g2.setPowerSave(0);
 
   if (menuDepth == 0) {

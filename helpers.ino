@@ -86,6 +86,13 @@ void checkRebootReason() {
     rebootReason = "Unknown";
     break;
   }
+
+  Serial.printf("[RESET] Reason: %s (%d)\n", rebootReason.c_str(), (int)reason);
+  if (previousResetStageValid) {
+    Serial.printf("[RESET] Previous stage before reset: %s\n", previousResetStage);
+  } else {
+    Serial.println("[RESET] Previous stage before reset: unavailable");
+  }
 }
 
 // -------------------- Error Logging --------------------

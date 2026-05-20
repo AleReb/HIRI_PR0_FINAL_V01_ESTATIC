@@ -73,6 +73,7 @@ struct SystemConfig {
 
   // System
   bool rotateDisplay; // Rotar display 180° (default: false)
+  uint16_t scheduledRebootHours; // Reinicio programado en horas; 0 = deshabilitado
 
   // GNSS Power
   bool gnssEnabled; // Habilita GNSS completo y su recuperacion automatica

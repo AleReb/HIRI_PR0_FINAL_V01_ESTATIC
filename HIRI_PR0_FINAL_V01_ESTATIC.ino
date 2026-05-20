@@ -48,6 +48,7 @@ const byte TAIL = 0xAB;
 String VERSION = "Pro V0.1.23V";
 
 // -------------------- Global States --------------------
+bool oledOK;
 bool rtcOK = false;
 bool SHT31OK = false;
 bool SHT4xOK = false;
@@ -90,6 +91,7 @@ const uint32_t BTN2_DEBOUNCE_MS = 80;
 uint16_t PM1 = 0, PM25 = 0, PM10 = 0;
 float pmsTempC = NAN, pmsHum = NAN;
 int SDS198PM100 = 0;
+float gasPpm = NAN;
 float tempsht31 = NAN, humsht31 = NAN;
 float tempsht4x = NAN, humsht4x = NAN;
 float rtcTempC = NAN;
@@ -116,7 +118,7 @@ String currentNote = "9";
 String lastSavedCSVLine = "";
 File uploadFile;
 String deviceID = "/HIRIPV";
-const char *DEVICE_ID_STR = "10"; // Se actualizara desde config o manualmente
+const char *DEVICE_ID_STR = "1"; // Se actualizara desde config o manualmente
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
@@ -175,6 +177,8 @@ uint16_t ens160Eco2 = 0;
 uint8_t ens160Aqi = 0;
 bool ens160DataValid = false;
 char currentCriticalStage[32] = "boot";
+RTC_DATA_ATTR char previousResetStage[32] = "boot";
+RTC_DATA_ATTR bool previousResetStageValid = false;
 
 // Display State
 volatile DisplayState displayState = DISP_NORMAL;
@@ -296,7 +300,17 @@ void startWdtOnce() {
     Serial.println("[WDT] Started");
   }
 }
-void setStage(const char *stage) { lastStage = stage; }
+void setStage(const char *stage) {
+  if (stage == nullptr) {
+    return;
+  }
+  strncpy(currentCriticalStage, stage, sizeof(currentCriticalStage) - 1);
+  currentCriticalStage[sizeof(currentCriticalStage) - 1] = '\0';
+  strncpy(previousResetStage, currentCriticalStage, sizeof(previousResetStage) - 1);
+  previousResetStage[sizeof(previousResetStage) - 1] = '\0';
+  previousResetStageValid = true;
+  lastStage = currentCriticalStage;
+}
 
 void printHeartbeat() {
   static uint32_t lastHeartbeatMs = 0;
@@ -538,7 +552,12 @@ bool sendCurrentMeasurement() {
 // -------------------- Sensor Refresh --------------------
 void refreshSensors2s() {
   if (rtcOK) rtcTempC = rtc.getTemperature();
-  if (GasOK) Serial.printf("Gas PPM: %.2f\n", gas.readGasConcentrationPPM());
+  if (GasOK) {
+    gasPpm = gas.readGasConcentrationPPM();
+    Serial.printf("Gas PPM: %.2f\n", gasPpm);
+  } else {
+    gasPpm = NAN;
+  }
   if (SHT4xOK) {
     sensors_event_t h, t;
     if (sht4.getEvent(&h, &t)) {

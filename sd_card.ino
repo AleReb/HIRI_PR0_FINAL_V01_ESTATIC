@@ -2,11 +2,9 @@
 #include "config.h"
 extern SystemConfig config;
 extern bool SHT4xOK, GasOK, ENS160OK;
-extern float tempsht31, humsht31, tempsht4x, humsht4x, pmsTempC, pmsHum, rtcTempC, batV;
+extern float tempsht4x, humsht4x, gasPpm, pmsTempC, pmsHum, rtcTempC, batV;
 extern uint16_t PM1, PM25, PM10;
 extern int SDS198PM100;
-extern DFRobot_GAS_I2C gas;
-extern DFRobot_ENS160_I2C ENS160;
 extern String gpsDate, gpsLat, gpsLon, gpsAlt, gpsSpeedKmh, satellitesStr, hdopStr, rebootReason;
 extern bool rtcOK, SDOK, loggingEnabled, xtraLastOk;
 extern uint32_t sdSaveCounter, sendCounter;
@@ -40,8 +38,8 @@ void writeCSVHeader() {
   if (f) {
     if (f.size() == 0) { // Only write header if file is empty
       f.println("ts_ms,time,gpsDate,lat,lon,alt,spd_kmh,pm1,pm25,pm10,pmsTempC,"
-                "pmsHum,rtcTempC,batV,csq,sats,hdop,xtra_ok,sht31TempC,"
-                "sht31Hum,sht4xTempC,sht4xHum,resetReason,pm100,"
+                "pmsHum,rtcTempC,batV,csq,sats,hdop,xtra_ok,sht4xTempC,"
+                "sht4xHum,resetReason,pm100,"
                 "gasPpm,tvoc,eco2,aqi,notas");
       Serial.println("[SD] Wrote header to " + csvFileName);
     }
@@ -96,10 +94,6 @@ bool saveCSVData() {
   char hhmmss[9];
   snprintf(hhmmss, sizeof(hhmmss), "%02d:%02d:%02d", now.hour(), now.minute(),
            now.second());
-  String sht31Temp =
-      (SHT31OK && !isnan(tempsht31)) ? String(tempsht31, 2) : "0";
-  String sht31Humidity =
-      (SHT31OK && !isnan(humsht31)) ? String(humsht31, 2) : "0";
   String line = String(millis()) + "," + hhmmss + "," + gpsDate + "," + gpsLat +
                 "," + gpsLon + "," + gpsAlt + "," + gpsSpeedKmh + "," +
                 String(PM1) + "," + String(PM25) + "," + String(PM10) + "," +
@@ -107,11 +101,10 @@ bool saveCSVData() {
                 (isnan(pmsHum) ? "0" : String(pmsHum, 1)) + "," +
                 String(rtcTempC, 2) + "," + String(batV, 2) + "," +
                 String(csq) + "," + satellitesStr + "," + hdopStr + "," +
-                (xtraLastOk ? "1" : "0") + "," + sht31Temp + "," +
-                sht31Humidity + "," + String(tempsht4x, 2) + "," + 
+                (xtraLastOk ? "1" : "0") + "," + String(tempsht4x, 2) + "," + 
                 String(humsht4x, 2) + "," + rebootReason + "," + 
                 String(SDS198PM100) + "," +
-                (GasOK ? String(gas.readGasConcentrationPPM(), 2) : "0") + "," +
+                ((GasOK && !isnan(gasPpm)) ? String(gasPpm, 2) : "0") + "," +
                 ((ENS160OK && ens160DataValid) ? String(ens160Tvoc) : "0") + "," +
                 ((ENS160OK && ens160DataValid) ? String(ens160Eco2) : "0") + "," +
                 ((ENS160OK && ens160DataValid) ? String(ens160Aqi) : "0") + "," +

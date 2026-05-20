@@ -33,6 +33,7 @@ void loadConfig() {
 
   // System
   config.rotateDisplay = prefs.getBool("rotDisp", true); //false originalmente rotado para estas estaciones
+  config.scheduledRebootHours = prefs.getUShort("rebootH", 3);
   config.gnssEnabled = prefs.getBool("gnssEn", false);
 
   // GNSS Mode
@@ -55,6 +56,12 @@ void loadConfig() {
                 config.autostartGpsTimeout);
   Serial.printf("[CONFIG] Auto Debug: %s\n", config.autoDebug ? "YES" : "NO");
   Serial.printf("[CONFIG] Rotate Display: %s\n", config.rotateDisplay ? "YES" : "NO");
+  if (config.scheduledRebootHours == 0) {
+    Serial.println("[CONFIG] Scheduled reboot: disabled");
+  } else {
+    Serial.printf("[CONFIG] Scheduled reboot: every %u hours\n",
+                  config.scheduledRebootHours);
+  }
   Serial.printf("[CONFIG] GNSS enabled: %s\n", config.gnssEnabled ? "YES" : "NO");
   Serial.printf("[CONFIG] GNSS mode: %u\n", config.gnssMode);
 
@@ -88,6 +95,7 @@ void saveConfig() {
 
   // System
   prefs.putBool("rotDisp", config.rotateDisplay);
+  prefs.putUShort("rebootH", config.scheduledRebootHours);
   prefs.putBool("gnssEn", config.gnssEnabled);
 
   // GNSS Mode
@@ -119,6 +127,7 @@ void configSetDefaults() {
   config.autoDebug = true;         // SI autodebug
 
   config.rotateDisplay = false;     // Display NO rotado
+  config.scheduledRebootHours = 3;   // Reinicio programado cada 3 horas; 0 deshabilita
   config.gnssEnabled = false;       // GNSS apagado por defecto
 
   config.gnssMode = 15; // Todas las constelaciones (default)
@@ -161,6 +170,12 @@ void printConfig() {
 
   Serial.println("\n[System]");
   Serial.printf("  Rotate display:     %s\n", config.rotateDisplay ? "YES" : "NO");
+  if (config.scheduledRebootHours == 0) {
+    Serial.println("  Scheduled reboot:   OFF");
+  } else {
+    Serial.printf("  Scheduled reboot:   every %u hours\n",
+                  config.scheduledRebootHours);
+  }
 
   Serial.println("\n[GNSS Configuration]");
   Serial.printf("  Enabled:            %s\n", config.gnssEnabled ? "YES" : "NO");
@@ -244,6 +259,8 @@ void applyLEDConfig() {
     // Convertir porcentaje a 0-255
     uint8_t brightness = map(config.ledBrightness, 0, 100, 0, 255);
     pixels.setBrightness(brightness);
+    pixels.setPixelColor(0, pixels.Color(0, 50, 100));
+    pixels.show();
     Serial.printf("[LED] Brightness set to %u%% (%u/255)\n",
                   config.ledBrightness, brightness);
   }

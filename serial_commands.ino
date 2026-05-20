@@ -13,6 +13,7 @@ extern bool rtcOK;
 extern bool SDOK;
 extern bool loggingEnabled;
 extern bool streaming;
+extern bool oledOK;
 extern uint32_t sendCounter;
 extern uint32_t sdSaveCounter;
 extern String csvFileName;
@@ -101,7 +102,7 @@ void processSerialCommand() {
 
     Serial.println(F("\n[Configuration]"));
     Serial.println(F("  config              - Show all configuration"));
-    Serial.println(F("  config sd/http/display/power - Show specific config"));
+    Serial.println(F("  config sd/http/display/power/system - Show specific config"));
     Serial.println(F("  set sdauto on/off   - Mount SD on boot"));
     Serial.println(F("  set sdsave 3/60/600/1200 - SD save period (seconds)"));
     Serial.println(F("  set httpsend 3/60/600/1200 - HTTP send period (seconds)"));
@@ -117,6 +118,7 @@ void processSerialCommand() {
         F("  set autogpsto 60-900 - GPS timeout (60s-15min, default: 600s)"));
     Serial.println(F("  set autodebug on/off - Auto-start in debug mode"));
     Serial.println(F("  set rotatedisplay on/off - Rotate display 180 deg"));
+    Serial.println(F("  set reboot 0-720   - Auto reboot hours (0 disables, default 3)"));
     Serial.println(
         F("  set gnssmode 1/3/5/7/15 - GNSS mode (1=GPS, 3=GPS+GLO, 15=ALL)"));
     Serial.println(F("  configreset         - Reset to defaults"));
@@ -283,6 +285,15 @@ void processSerialCommand() {
                   ESP.getFlashChipSize() / (1024 * 1024));
     Serial.printf("Free heap:    %lu bytes\n", ESP.getFreeHeap());
     Serial.printf("Uptime:       %lu s\n", millis() / 1000);
+    if (config.scheduledRebootHours == 0) {
+      Serial.println("Auto reboot:  OFF");
+    } else {
+      uint32_t uptimeS = millis() / 1000UL;
+      uint32_t intervalS = (uint32_t)config.scheduledRebootHours * 3600UL;
+      uint32_t remainingS = uptimeS < intervalS ? intervalS - uptimeS : 0;
+      Serial.printf("Auto reboot:  every %u h, next in %lu s\n",
+                    config.scheduledRebootHours, remainingS);
+    }
     Serial.printf("Reboot reason:%s\n", rebootReason.c_str());
   }
 
@@ -356,6 +367,17 @@ void processSerialCommand() {
     Serial.println("=== Power/LED Configuration ===");
     Serial.printf("NeoPixel enabled: %s\n", config.ledEnabled ? "YES" : "NO");
     Serial.printf("Brightness:       %u%%\n", config.ledBrightness);
+  }
+
+  else if (cmd == "config system") {
+    Serial.println("=== System Configuration ===");
+    Serial.printf("Rotate display:   %s\n", config.rotateDisplay ? "YES" : "NO");
+    if (config.scheduledRebootHours == 0) {
+      Serial.println("Scheduled reboot: OFF");
+    } else {
+      Serial.printf("Scheduled reboot: every %u hours\n",
+                    config.scheduledRebootHours);
+    }
   }
 
   else if (cmd.startsWith("set ")) {
@@ -549,13 +571,39 @@ void processSerialCommand() {
     else if (param == "rotatedisplay on") {
       config.rotateDisplay = true;
       saveConfig();
-      u8g2.setDisplayRotation(U8G2_R0);
+      if (oledOK) u8g2.setDisplayRotation(U8G2_R0);
       Serial.println("[CONFIG] Rotate Display: ON");
     } else if (param == "rotatedisplay off") {
       config.rotateDisplay = false;
       saveConfig();
-      u8g2.setDisplayRotation(U8G2_R2);
+      if (oledOK) u8g2.setDisplayRotation(U8G2_R2);
       Serial.println("[CONFIG] Rotate Display: OFF");
+    }
+
+    // Scheduled reboot
+    else if (param.startsWith("reboot ")) {
+      String valStr = param.substring(7);
+      valStr.trim();
+      bool numeric = valStr.length() > 0;
+      for (size_t i = 0; i < valStr.length(); ++i) {
+        if (!isDigit(valStr[i])) {
+          numeric = false;
+          break;
+        }
+      }
+
+      int val = numeric ? valStr.toInt() : -1;
+      if (val >= 0 && val <= 720) {
+        config.scheduledRebootHours = (uint16_t)val;
+        saveConfig();
+        if (val == 0) {
+          Serial.println("[CONFIG] Scheduled reboot: OFF");
+        } else {
+          Serial.printf("[CONFIG] Scheduled reboot: every %d hours\n", val);
+        }
+      } else {
+        Serial.println("[CONFIG] Invalid reboot value (use 0-720 hours)");
+      }
     }
 
     // GNSS mode

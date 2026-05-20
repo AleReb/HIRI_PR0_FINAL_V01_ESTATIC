@@ -18,6 +18,7 @@ const unsigned char logo_bits[] PROGMEM = {
 
 
 void drawAnimation() {
+  if (!oledOK) return;
   u8g2.clearBuffer();
   
   // Dibujar logo escalado
