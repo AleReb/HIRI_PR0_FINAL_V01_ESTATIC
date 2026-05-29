@@ -1,5 +1,5 @@
 /*
- * FirmwarePro.ino - Version Pro V0.1.23V
+ * FirmwarePro.ino - Version Pro V0.1.27R
  * Firmware HIRI PR0 estatico: sensores, GNSS, SD, UI OLED y telemetria HTTP.
  * 
  * Basado en la version Debug 0.1.3V (la mas estable) pero con mejoras de performance:
@@ -45,7 +45,7 @@ const byte HEADER = 0xAA;
 const byte CMD = 0xCF;
 const byte TAIL = 0xAB;
 
-String VERSION = "Pro V0.1.23V";
+String VERSION = "Pro V0.1.27R";
 
 // -------------------- Global States --------------------
 bool oledOK;
@@ -86,6 +86,9 @@ volatile uint32_t lastDebounceTime1 = 0;
 volatile uint32_t lastDebounceTime2 = 0;
 const uint32_t BTN1_DEBOUNCE_MS = 80;
 const uint32_t BTN2_DEBOUNCE_MS = 80;
+const uint32_t I2C_POWER_OFF_MS = 250;
+const uint32_t I2C_POWER_ON_SETTLE_MS = 700;
+const uint32_t BOOT_REVIEW_HOLD_MS = 3000;
 
 // Global Data
 uint16_t PM1 = 0, PM25 = 0, PM10 = 0;
@@ -118,7 +121,7 @@ String currentNote = "9";
 String lastSavedCSVLine = "";
 File uploadFile;
 String deviceID = "/HIRIPV";
-const char *DEVICE_ID_STR = "1"; // Se actualizara desde config o manualmente
+const char *DEVICE_ID_STR = "10"; // Se actualizara desde config o manualmente
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
@@ -184,6 +187,12 @@ RTC_DATA_ATTR bool previousResetStageValid = false;
 volatile DisplayState displayState = DISP_NORMAL;
 volatile uint32_t displayStateStartTime = 0;
 uint32_t lastOledActivity = 0;
+
+const uint8_t BOOT_ITEM_COUNT = 8;
+const char *BOOT_ITEM_LABELS[BOOT_ITEM_COUNT] = {
+    "I2C", "OLED", "SD", "RTC", "SHT4", "SHT31", "ENS", "GAS"};
+char bootItemStatus[BOOT_ITEM_COUNT][6] = {
+    "WAIT", "WAIT", "WAIT", "WAIT", "WAIT", "WAIT", "WAIT", "WAIT"};
 
 // Modem Sync
 uint8_t rtcModemSyncCount = 0;
@@ -253,6 +262,7 @@ void drawAnimation();
 void startWifiApServer();
 void stopWifiApServer();
 void renderDisplay();
+void oledStatus(const String &l1, const String &l2 = "", const String &l3 = "", const String &l4 = "");
 bool saveCSVData();
 void checkRebootReason();
 void readPMS();
@@ -279,6 +289,11 @@ void IRAM_ATTR isr_btn2();
 void initI2CSensors();
 void recoverI2CBus(const char *reason);
 void updateEns160State();
+bool i2cDevicePresent(uint8_t address);
+void setI2CPower(bool enabled);
+void powerCycleI2CDevices(const char *reason);
+void bootStatus(const String &stage, const String &detail, bool ok);
+void renderBootWindow();
 extern void ui_btn1_click();
 extern void ui_btn2_click();
 extern bool uiFullMode;
@@ -329,39 +344,75 @@ void configureI2CBus() {
   Serial.printf("[I2C] Clock: %u Hz\n", I2C_CLOCK_HZ);
 }
 
+bool i2cDevicePresent(uint8_t address) {
+  Wire.beginTransmission(address);
+  return Wire.endTransmission() == 0;
+}
+
+void setI2CPower(bool enabled) {
+#if I2C_POWER_PIN >= 0
+  digitalWrite(I2C_POWER_PIN, enabled ? HIGH : LOW);
+  Serial.printf("[I2C_PWR] GPIO%d=%s\n", I2C_POWER_PIN,
+                enabled ? "HIGH" : "LOW");
+#endif
+}
+
+void powerCycleI2CDevices(const char *reason) {
+  Serial.printf("[I2C_PWR] Power cycle: %s\n", reason ? reason : "manual");
+  setI2CPower(false);
+  delay(I2C_POWER_OFF_MS);
+  setI2CPower(true);
+  delay(I2C_POWER_ON_SETTLE_MS);
+}
+
 void initI2CSensors() {
   setStage("i2c.sensors.init");
 
+  bootStatus("SHT4X", "probando...", true);
   if (!sht4.begin()) {
     SHT4xOK = false;
     logError("I2C_SENSOR_FAIL", "SHT4X.begin", "SHT4x not found");
+    bootStatus("SHT4X", "no detectado", false);
   } else {
     sht4.setPrecision(SHT4X_HIGH_PRECISION);
     sht4.setHeater(SHT4X_NO_HEATER);
     SHT4xOK = true;
     sht4xFailCount = 0;
     Serial.println("[SHT4X] OK");
+    bootStatus("SHT4X", "OK", true);
   }
+  feedWdt();
+  yield();
 
+  bootStatus("SHT31", "probando...", true);
   if (!sht31.begin(0x44)) {
     SHT31OK = false;
     logError("I2C_SENSOR_FAIL", "SHT31.begin", "SHT31 not found");
+    bootStatus("SHT31", "no detectado", false);
   } else {
     SHT31OK = true;
     Serial.println("[SHT31] OK");
+    bootStatus("SHT31", "OK", true);
   }
+  feedWdt();
+  yield();
 
+  bootStatus("ENS160", "probando...", true);
   if (NO_ERR != ENS160.begin()) {
     ENS160OK = false;
     ens160DataValid = false;
     logError("I2C_SENSOR_FAIL", "ENS160.begin", "ENS160 init failed");
+    bootStatus("ENS160", "no detectado", false);
   } else {
     ENS160.setPWRMode(ENS160_STANDARD_MODE);
     ENS160OK = true;
     ens160InvalidCount = 0;
     ens160DataValid = false;
     Serial.println("[ENS160] OK");
+    bootStatus("ENS160", "OK", true);
   }
+  feedWdt();
+  yield();
 }
 
 void recoverI2CBus(const char *reason) {
@@ -369,8 +420,24 @@ void recoverI2CBus(const char *reason) {
   setStage("i2c.recover");
   Wire.end();
   delay(50);
+  powerCycleI2CDevices(reason);
   configureI2CBus();
+  oledOK = i2cDevicePresent(0x3C) || i2cDevicePresent(0x3D);
+  if (oledOK) {
+    u8g2.begin();
+    u8g2.setDisplayRotation(config.rotateDisplay ? U8G2_R0 : U8G2_R2);
+  }
   initI2CSensors();
+  bootStatus("GAS", "probando...", true);
+  if (!gas.begin()) {
+    GasOK = false;
+    bootStatus("GAS", "no detectado", false);
+  } else {
+    gas.changeAcquireMode(gas.PASSIVITY);
+    gas.setTempCompensation(gas.ON);
+    GasOK = true;
+    bootStatus("GAS", "OK", true);
+  }
 }
 
 void updateEns160State() {
@@ -429,7 +496,8 @@ void enforceStationStartupConfig() {
 }
 
 // -------------------- OLED Helper --------------------
-void oledStatus(const String &l1, const String &l2 = "", const String &l3 = "", const String &l4 = "") {
+void oledStatus(const String &l1, const String &l2, const String &l3, const String &l4) {
+  if (!oledOK) return;
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_5x7_tf);
   u8g2.setCursor(0, 12); u8g2.print(l1);
@@ -437,6 +505,47 @@ void oledStatus(const String &l1, const String &l2 = "", const String &l3 = "", 
   u8g2.setCursor(0, 40); u8g2.print(l3);
   u8g2.setCursor(0, 54); u8g2.print(l4);
   u8g2.sendBuffer();
+}
+
+int bootIndexForStage(const String &stage) {
+  if (stage == "I2C" || stage == "I2C PWR") return 0;
+  if (stage == "OLED") return 1;
+  if (stage == "SD") return 2;
+  if (stage == "RTC") return 3;
+  if (stage == "SHT4X" || stage == "SHT4") return 4;
+  if (stage == "SHT31") return 5;
+  if (stage == "ENS160" || stage == "ENS") return 6;
+  if (stage == "GAS") return 7;
+  return -1;
+}
+
+void renderBootWindow() {
+  if (!oledOK) return;
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_5x7_tf);
+  u8g2.drawStr(0, 7, "REVISION INICIO");
+  u8g2.drawHLine(0, 9, 128);
+  u8g2.setFont(u8g2_font_4x6_tf);
+  for (uint8_t i = 0; i < BOOT_ITEM_COUNT; ++i) {
+    int y = 16 + (i * 6);
+    u8g2.setCursor(0, y);
+    u8g2.print(BOOT_ITEM_LABELS[i]);
+    u8g2.setCursor(96, y);
+    u8g2.print(bootItemStatus[i]);
+  }
+  u8g2.sendBuffer();
+}
+
+void bootStatus(const String &stage, const String &detail, bool ok) {
+  const char *state = detail.startsWith("probando") ? "..." : (ok ? "OK" : "FAIL");
+  Serial.printf("[BOOTCHK] %-12s %-4s %s\n", stage.c_str(), state, detail.c_str());
+
+  int idx = bootIndexForStage(stage);
+  if (idx >= 0) {
+    strncpy(bootItemStatus[idx], state, sizeof(bootItemStatus[idx]) - 1);
+    bootItemStatus[idx][sizeof(bootItemStatus[idx]) - 1] = '\0';
+    renderBootWindow();
+  }
 }
 
 // -------------------- AT Helpers --------------------
@@ -513,8 +622,11 @@ String getIdsSensores(const String& deviceId) {
   if (deviceId == "7") return "1093,1094,1094,1095,1095,1095,1095,1095,1096,1097,1097,1097,1097,1097,1098,1099,1099";
   if (deviceId == "8") return "1100,1101,1101,1102,1102,1102,1102,1102,1103,1104,1104,1104,1104,1104,1105,1106,1106";
   if (deviceId == "9") return "1107,1108,1108,1109,1109,1109,1109,1109,1110,1111,1111,1111,1111,1111,1112,1113,1113";
-  if (deviceId == "10") return "1114,1115,1115,1116,1116,1116,1116,1116,1117,1118,1118,1118,1118,1118,1119,1120,1120";
-  return ""; 
+  if (deviceId == "10") return"1114,1115,1115,1116,1116,1116,1116,1116,1117,1118,1118,1118,1118,1118,1119,1120,1120";
+  if (deviceId == "11") return"1121,1122,1122,1123,1123,1123,1123,1123,1124,1125,1125,1125,1125,1125,1126,1127,1127";
+  if (deviceId == "12") return"1128,1129,1129,1130,1130,1130,1130,1130,1131,1132,1132,1132,1132,1132,1133,1134,1134";
+  if (deviceId == "13") return"1135,1136,1136,1137,1137,1137,1137,1137,1138,1139,1139,1139,1139,1139,1140,1141,1141";
+ return ""; 
 }
 bool sendCurrentMeasurement() {
   setStage("sendCurrentMeasurement.build");
@@ -631,11 +743,21 @@ void handleButtonLogic() {
 
 // -------------------- SETUP --------------------
 void setup() {
-  delay(300); Serial.begin(115200);
+ Serial.begin(115200);
   startWdtOnce(); setStage("setup.start");
+#if I2C_POWER_PIN >= 0
+  pinMode(I2C_POWER_PIN, OUTPUT);
+  setI2CPower(false);
+  Serial.println("[I2C_PWR] Setup starts with I2C power LOW");
+  delay(I2C_POWER_OFF_MS);
+  setI2CPower(true);
+  Serial.println("[I2C_PWR] I2C power HIGH before bus init");
+  delay(I2C_POWER_ON_SETTLE_MS);
+#endif
   configureI2CBus();
+  bootStatus("I2C", "OK", true);
   pixels.begin(); pixels.setPixelColor(0, pixels.Color(0, 50, 100)); pixels.show();
-
+  delay(300);
   Serial.println("\n[BOOT] FirmwarePro " + VERSION);
   checkRebootReason();
 
@@ -647,27 +769,6 @@ void setup() {
   loadConfig();
   enforceStationStartupConfig();
   applyLEDConfig();
-
-  logFilePath = String("/errors_h") + String(DEVICE_ID_STR) + String(".csv");
-  failedTxPath = String("/failed_h") + String(DEVICE_ID_STR) + String(".csv");
-  AP_SSID_STR = "HIRIPRO_" + String(DEVICE_ID_STR);
-
-  u8g2.begin(); u8g2.setDisplayRotation(config.rotateDisplay ? U8G2_R0 : U8G2_R2);
-  lastOledActivity = millis();
-
-  // Animation
-  while (logoXOffset < LOGO_FINAL_X || hiriXOffset > HIRI_FINAL_X || proYOffset > PRO_FINAL_Y) {
-    feedWdt();
-    if (logoXOffset < LOGO_FINAL_X) logoXOffset += 4;
-    if (hiriXOffset > HIRI_FINAL_X) hiriXOffset -= 4;
-    if (proYOffset > PRO_FINAL_Y) proYOffset -= 1;
-    drawAnimation(); delay(20);
-  }
-
-  pms.begin(9600);
-  Serial2.begin(9600, SERIAL_8N1, Serial2RX_PIN, Serial2TX_PIN);
-
-  if (rtc.begin()) { rtcOK = true; }
   
   spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
   SDOK = SD.begin(SD_CS, spiSD);
@@ -676,17 +777,58 @@ void setup() {
     writeCSVHeader();
     prefs.begin("system", false); prefs.putString("csvFile", csvFileName); prefs.end();
   }
+  logFilePath = String("/errors_h") + String(DEVICE_ID_STR) + String(".csv");
+  failedTxPath = String("/failed_h") + String(DEVICE_ID_STR) + String(".csv");
+  AP_SSID_STR = "HIRIPRO_" + String(DEVICE_ID_STR);
+
+  oledOK = i2cDevicePresent(0x3C) || i2cDevicePresent(0x3D);
+  if (oledOK) {
+    u8g2.begin();
+    u8g2.setDisplayRotation(config.rotateDisplay ? U8G2_R0 : U8G2_R2);
+  }
+  lastOledActivity = millis();
+
+  // Animation
+  if (oledOK) {
+    while (logoXOffset < LOGO_FINAL_X || hiriXOffset > HIRI_FINAL_X || proYOffset > PRO_FINAL_Y) {
+      feedWdt();
+      if (logoXOffset < LOGO_FINAL_X) logoXOffset += 4;
+      if (hiriXOffset > HIRI_FINAL_X) hiriXOffset -= 4;
+      if (proYOffset > PRO_FINAL_Y) proYOffset -= 1;
+      drawAnimation(); delay(20);
+    }
+  } else {
+    Serial.println("[OLED] Animation skipped: OLED not detected");
+  }
+  bootStatus("OLED", oledOK ? "SSD1306 detectado" : "sin respuesta I2C", oledOK);
+
+  pms.begin(9600);
+  Serial2.begin(9600, SERIAL_8N1, Serial2RX_PIN, Serial2TX_PIN);
+  bootStatus("SERIAL", "PMS/SDS UART listos", true);
+
+  if (rtc.begin()) { rtcOK = true; }
+  bootStatus("RTC", rtcOK ? "DS3231 detectado" : "DS3231 no responde", rtcOK);
+  
+  
+  bootStatus("SD", SDOK ? "SD disponible" : "SD no montada", SDOK);
 
   setStage("sensors.init");
   initI2CSensors();
+  bootStatus("GAS", "probando...", true);
   if (!gas.begin()) {
     GasOK = false;
     logError("I2C_SENSOR_FAIL", "gas.begin", "Gas sensor not found");
+    bootStatus("GAS", "no detectado", false);
   } else {
     gas.changeAcquireMode(gas.PASSIVITY);
     gas.setTempCompensation(gas.ON);
     GasOK = true;
     Serial.println("[GAS] OK");
+    bootStatus("GAS", "OK", true);
+  }
+  if (oledOK) {
+    renderBootWindow();
+    delay(BOOT_REVIEW_HOLD_MS);
   }
 
   pinMode(BUTTON_PIN_1, INPUT_PULLUP);
@@ -694,6 +836,7 @@ void setup() {
     pinMode(BUTTON_PIN_2, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(BUTTON_PIN_2), isr_btn2, RISING);
   }
+  bootStatus("BTN", String("B1=") + BUTTON_PIN_1 + " I2C_PWR=" + I2C_POWER_PIN, true);
 
   setStage("modem.boot");
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);

@@ -40,6 +40,10 @@ NOTA EN LA PLACA VIEJA COYAHIQUE SOLO ESTA EL BOTON 39
 // Para habilitarlo de nuevo, cambia -1 por el GPIO real. Ejemplo: #define BUTTON_PIN_2 0
 #define BUTTON_PIN_2 -1
 
+// GPIO0 controla la alimentacion de los sensores I2C.
+// LOW corta alimentacion, HIGH energiza el bus antes de inicializar sensores.
+#define I2C_POWER_PIN 0
+
 #define Serial2RX_PIN 23 // Pin RX del ESP32 conectado al TX del sensor.
 #define Serial2TX_PIN 19  // Pin TX del ESP32 (no se usa para recibir datos del sensor).
 

@@ -20,6 +20,11 @@ const unsigned char logo_bits[] PROGMEM = {
 void drawAnimation() {
   if (!oledOK) return;
   u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_4x6_tf);
+  String shortVersion = VERSION;
+  shortVersion.replace("Pro ", "");
+  int versionW = u8g2.getStrWidth(shortVersion.c_str());
+  u8g2.drawStr(128 - versionW, 6, shortVersion.c_str());
   
   // Dibujar logo escalado
   //u8g2.setDrawColor(0);  // Establece el color de dibujo a negro
@@ -34,5 +39,10 @@ void drawAnimation() {
   u8g2.setFont(u8g2_font_6x10_tr);  // Fuente muy pequeña para PRO
   u8g2.drawStr(PRO_FINAL_X, proYOffset, "PRO");  // Usa PRO_FINAL_X para la posición horizontal
   
+  u8g2.setFont(u8g2_font_5x7_tf);
+  String idText = "ID " + String(DEVICE_ID_STR);
+  int idW = u8g2.getStrWidth(idText.c_str());
+  u8g2.drawStr(128 - idW, 63, idText.c_str());
+
   u8g2.sendBuffer();
 }

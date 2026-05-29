@@ -31,6 +31,7 @@ extern const char *DEVICE_ID_STR;
 extern String VERSION;
 extern String logFilePath;
 extern String failedTxPath;
+extern void recoverI2CBus(const char *reason);
 
 // Forward declarations
 void saveConfig();
@@ -88,6 +89,7 @@ void processSerialCommand() {
     Serial.println(F("\n[System]"));
     Serial.println(F("  sysinfo     - Show system info"));
     Serial.println(F("  reboot      - Reboot ESP32"));
+    Serial.println(F("  i2c reset   - Power-cycle I2C sensors and re-run checks"));
     Serial.println(F("  mem         - Show memory usage"));
 
     Serial.println(F("\n[Streaming]"));
@@ -378,6 +380,11 @@ void processSerialCommand() {
       Serial.printf("Scheduled reboot: every %u hours\n",
                     config.scheduledRebootHours);
     }
+  }
+
+  else if (cmd == "i2c reset") {
+    Serial.println("[I2C] Manual power reset requested");
+    recoverI2CBus("serial command");
   }
 
   else if (cmd.startsWith("set ")) {
