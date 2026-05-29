@@ -1,5 +1,30 @@
 # Registro de Cambios - FirmwarePro
 
+## [Pro V0.1.27R] - 2026-05-29
+### Control de alimentacion I2C por GPIO0 y revision OLED de arranque
+
+- Se documenta GPIO0 como `I2C_POWER_PIN` para enable/alimentacion de OLED y sensores I2C.
+- Se documenta secuencia de arranque: GPIO0 LOW, GPIO0 HIGH, inicializacion de `Wire`, deteccion OLED y animacion HIRI.
+- La animacion muestra version arriba a la derecha e ID del dispositivo abajo a la derecha.
+- Se agrega ventana unica de revision de inicio con estados `WAIT`, `...`, `OK` y `FAIL` para:
+  - I2C.
+  - OLED.
+  - SD.
+  - RTC.
+  - SHT4.
+  - SHT31.
+  - ENS.
+  - GAS.
+- La ventana de revision queda visible cerca de 3 segundos antes de continuar con modem/red.
+- Se documenta comando serial `i2c reset` para cortar/reactivar GPIO0, reiniciar bus I2C, redetectar OLED y volver a revisar sensores.
+- Se actualiza documentacion a `DEVICE_ID_STR = "12"`, AP `HIRIPRO_12` y mapeo HTTP del dispositivo 12.
+- Se corrige el periodo operativo de guardado SD documentado a 180 s / 3 min.
+
+Impacto:
+
+- Cambio documental alineado con firmware actual.
+- Reduce riesgo de confundir GPIO0 con boton; GPIO0 queda definido como enable/power-cycle I2C.
+
 ## [Pro V0.1.15V] - 2026-04-30
 ### Sincronización de documentación con firmware actual
 

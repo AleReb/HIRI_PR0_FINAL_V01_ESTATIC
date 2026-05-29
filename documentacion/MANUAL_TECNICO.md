@@ -1,6 +1,6 @@
 # FirmwarePro - Manual Técnico
 
-Versión de referencia: **Pro V0.1.15V**  
+Versión de referencia: **Pro V0.1.27R**  
 Sketch principal: **`HIRI_PR0_FINAL_V01_ESTATIC.ino`**  
 Objetivo: documentación técnica para operación, mantenimiento e integración de la estación HIRI PR0 estática.
 
@@ -38,13 +38,28 @@ NeoPixel: GPIO12
 SD HSPI: SCLK14, MISO2, MOSI15, CS13
 BTN1: GPIO39
 BTN2: deshabilitado por defecto (-1)
+I2C enable/power: GPIO0
 ```
 
 Notas:
 
 - `BTN1` usa lectura activa en LOW y requiere resistencia externa según la placa usada.
 - `BTN2` solo se habilita si `BUTTON_PIN_2` se cambia desde `-1` a un GPIO real.
+- `I2C_POWER_PIN` usa GPIO0 para controlar alimentación/enable de OLED y sensores I2C. En `setup()` parte en LOW, luego sube a HIGH, espera estabilización y recién después inicializa `Wire`.
 - `POWER_PIN` existe como referencia histórica, pero no está activo en el flujo actual.
+
+### Secuencia de alimentación I2C y OLED
+
+1. `pinMode(I2C_POWER_PIN, OUTPUT)`.
+2. `I2C_POWER_PIN = LOW` durante una ventana breve.
+3. `I2C_POWER_PIN = HIGH`.
+4. Espera de estabilización.
+5. `configureI2CBus()` con `Wire.setTimeOut(50)` y reloj I2C a 50 kHz.
+6. Detección de OLED en `0x3C` o `0x3D`.
+7. `u8g2.begin()` y animación de arranque.
+8. Ventana única de revisión de inicio.
+
+La recuperación `recoverI2CBus()` ejecuta el mismo power-cycle sobre GPIO0, reinicia `Wire`, redetecta OLED y vuelve a inicializar sensores.
 
 ---
 
@@ -64,7 +79,7 @@ Defaults vigentes:
 
 ```text
 sdAutoMount = true
-sdSavePeriod = 30000 ms
+sdSavePeriod = 180000 ms
 httpSendPeriod = 300000 ms
 httpTimeout = 15 s
 oledAutoOff = false
@@ -136,9 +151,19 @@ Sensores actuales:
 
 Mecanismos de robustez:
 
+- Revisión secuencial de arranque por sensor con estado en Serial y OLED.
 - Recuperación de bus I2C ante fallas repetidas.
+- Power-cycle de OLED/sensores I2C usando GPIO0.
 - Reintento/reinicialización para SHT4x y ENS160.
 - Valores seguros para HTTP cuando una lectura no está disponible.
+
+Durante el arranque se muestra una sola ventana de revisión con filas:
+
+```text
+I2C, OLED, SD, RTC, SHT4, SHT31, ENS, GAS
+```
+
+Cada fila se actualiza de `WAIT` a `...` y finalmente a `OK` o `FAIL`. Al terminar, la ventana queda visible cerca de 3 segundos.
 
 ---
 
@@ -234,13 +259,13 @@ Mecanismos de robustez:
 `DEVICE_ID_STR` activo:
 
 ```text
-10
+12
 ```
 
-`idsSensores` para dispositivo 10:
+`idsSensores` para dispositivo 12:
 
 ```text
-1114,1115,1115,1116,1116,1116,1116,1116,1117,1118,1118,1118,1118,1118,1119,1120,1120
+1128,1129,1129,1130,1130,1130,1130,1130,1131,1132,1132,1132,1132,1132,1133,1134,1134
 ```
 
 `idsVariables` común:
@@ -322,6 +347,7 @@ Comandos:
 - `sdinfo`, `sdlist`, `sdnew`, `sdclear`, `sdclear confirm`
 - `netinfo`, `csq`
 - `sysinfo`, `mem`, `reboot`
+- `i2c reset`
 - `start`, `stop`
 - `config`, `config sd`, `config http`, `config display`, `config power`
 - `set sdauto on|off`
@@ -361,12 +387,14 @@ arduino-cli upload -p COMx --fqbn esp32:esp32:esp32 .
 ### Smoke test
 
 1. Boot sin loop de reset.
-2. OLED muestra versión e ID.
-3. SD monta y crea CSV.
-4. Sensores entregan valores o fallan con logs controlados.
+2. GPIO0 sube a HIGH antes de inicializar I2C.
+3. OLED muestra animación con versión e ID.
+4. Ventana de revisión muestra `I2C`, `OLED`, `SD`, `RTC`, `SHT4`, `SHT31`, `ENS` y `GAS` con `OK/FAIL`.
+5. SD monta y crea CSV.
+6. Sensores entregan valores o fallan con logs controlados.
 5. Módem registra red y obtiene CSQ.
 6. HTTP responde o deja trazabilidad en `failed_h<ID>.csv`.
-7. WiFi AP aparece como `HIRIPRO_10`.
+7. WiFi AP aparece como `HIRIPRO_12`.
 8. Web SD responde en `192.168.4.1`.
 
 Si GNSS se habilita, agregar validación de fix, satélites, HDOP y NMEA.

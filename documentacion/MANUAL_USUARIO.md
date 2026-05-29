@@ -1,6 +1,6 @@
 # FirmwarePro - Manual de Usuario
 
-Versión de referencia: **Pro V0.1.15V**  
+Versión de referencia: **Pro V0.1.27R**  
 Plataforma: **ESP32 Dev Module (`esp32:esp32:esp32`)**  
 Sketch principal: **`HIRI_PR0_FINAL_V01_ESTATIC.ino`**
 
@@ -21,25 +21,37 @@ FirmwarePro es un firmware para monitoreo ambiental y telemetría técnica que i
 - Interfaz local por **OLED + botones**.
 - Modo **WiFi AP** para gestión de archivos en SD desde celular o PC.
 
-La configuración activa corresponde a una variante de estación HIRIDUST/VALPO con `DEVICE_ID_STR = "10"`.
+La configuración activa corresponde a una variante de estación HIRIDUST/VALPO con `DEVICE_ID_STR = "12"`.
 
 ---
 
 ## 2. Arranque rápido
 
 1. Energiza el equipo.
-2. Espera la animación de inicio y los estados de módem, red y SD.
-3. La estación usa autostart por defecto: inicia guardado SD y transmisión HTTP automáticamente si la configuración no fue modificada.
-4. En pantalla usa:
+2. El firmware activa GPIO0 como enable de alimentación I2C: primero LOW, luego HIGH para encender OLED y sensores.
+3. Espera la animación de inicio. En la esquina superior derecha se muestra la versión y abajo a la derecha el ID del dispositivo.
+4. Revisa la ventana única de diagnóstico de arranque. Cada fila pasa a `OK` o `FAIL`:
+   - I2C
+   - OLED
+   - SD
+   - RTC
+   - SHT4
+   - SHT31
+   - ENS
+   - GAS
+5. La ventana queda visible cerca de 3 segundos antes de continuar con módem/red y pantallas normales.
+6. La estación usa autostart por defecto: inicia guardado SD y transmisión HTTP automáticamente si la configuración no fue modificada.
+7. En pantalla usa:
    - **BTN1:** navegar, cancelar prompt o acción rápida según pantalla.
    - **BTN2:** seleccionar, confirmar o salir según pantalla.
-5. Para iniciar o detener manualmente:
+8. Para iniciar o detener manualmente:
    - Menú principal -> **EMPEZAR/DETENER MUESTREO** -> confirmar con BTN2.
 
 Notas de hardware:
 
 - En la configuración actual, **BTN1 está en GPIO39**.
 - **BTN2 está deshabilitado por defecto** en `config.h` (`BUTTON_PIN_2 = -1`). Si el hardware necesita BTN2, se debe asignar un GPIO real.
+- **GPIO0 no es botón**: se usa como enable de alimentación I2C (`I2C_POWER_PIN`) para encender y reiniciar OLED/sensores.
 
 ---
 
@@ -95,7 +107,7 @@ La nota se escribe en la columna `notas` y luego se limpia automáticamente para
 Al activar **WIFI SD (ON/OFF)**, el equipo levanta un AP WiFi:
 
 ```text
-SSID: HIRIPRO_10
+SSID: HIRIPRO_12
 Password: 12345678
 IP típica: 192.168.4.1
 ```
@@ -117,7 +129,9 @@ En modo WiFi el firmware prioriza DNS y WebServer para mejorar la estabilidad de
 
 La pantalla OLED muestra, según el modo:
 
-- Hora o estado de arranque.
+- Animación de arranque con versión e ID.
+- Ventana de revisión de inicio con `I2C`, `OLED`, `SD`, `RTC`, `SHT4`, `SHT31`, `ENS` y `GAS`.
+- Hora o estado de operación.
 - Actividad y último estado de SD/HTTP.
 - Datos de sensores.
 - Red celular y CSQ.
@@ -137,7 +151,7 @@ Archivo diario por dispositivo:
 /hiripro<ID>_DD_MM_YYYY.csv
 ```
 
-Con `DEVICE_ID_STR = "10"`, el nombre queda con prefijo `hiripro10`.
+Con `DEVICE_ID_STR = "12"`, el nombre queda con prefijo `hiripro12`.
 
 Cabecera CSV actual:
 
@@ -157,7 +171,7 @@ Archivos auxiliares:
 Valores definidos en `config.ino`:
 
 ```text
-Guardado SD: cada 30 s
+Guardado SD: cada 180 s (3 min)
 Envío HTTP: cada 300 s (5 min)
 Timeout HTTP: 15 s
 OLED auto-off: desactivado
@@ -188,7 +202,7 @@ Si se requiere posición GNSS, habilitar GNSS por comando serial y validar fix a
 
 ### No aparece la web en Windows
 
-- Confirmar conexión al SSID `HIRIPRO_10`.
+- Confirmar conexión al SSID `HIRIPRO_12`.
 - Abrir manualmente `http://192.168.4.1`.
 - Desconectar y reconectar WiFi del PC.
 
@@ -225,6 +239,7 @@ Comandos principales:
 - `sdinfo`, `sdlist`, `sdnew`, `sdclear`, `sdclear confirm`
 - `netinfo`, `csq`
 - `sysinfo`, `mem`, `reboot`
+- `i2c reset`
 - `start`, `stop`
 - `config`, `config sd`, `config http`, `config display`, `config power`
 - `set sdauto on|off`

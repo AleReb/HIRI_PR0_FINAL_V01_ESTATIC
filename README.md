@@ -6,9 +6,9 @@ Firmware para estación de monitoreo técnico-científico basada en ESP32, con a
 
 - Plataforma objetivo: **ESP32 Dev Module** (`esp32:esp32:esp32`)
 - Sketch principal: **`HIRI_PR0_FINAL_V01_ESTATIC.ino`**
-- Versión de firmware en código: **Pro V0.1.15V**
-- ID de dispositivo activo: **`DEVICE_ID_STR = "10"`**
-- AP WiFi local: **`HIRIPRO_10`**
+- Versión de firmware en código: **Pro V0.1.27R**
+- ID de dispositivo activo: **`DEVICE_ID_STR = "12"`**
+- AP WiFi local: **`HIRIPRO_12`**
 - Password AP por defecto: **`12345678`**
 - Backend HTTP: `http://api-sensores.cmasccp.cl/insertarMedicion`
 - APN celular configurado: `flolive.net`
@@ -43,20 +43,47 @@ NeoPixel: GPIO12
 SD HSPI: SCLK14, MISO2, MOSI15, CS13
 BTN1: GPIO39
 BTN2: deshabilitado por defecto (-1)
+I2C enable/power: GPIO0
 ```
 
 Notas importantes:
 
 - `BTN1` usa lectura activa en LOW y requiere resistencia externa según la placa vieja Coyhaique.
 - `BTN2` queda deshabilitado mientras `BUTTON_PIN_2` sea `-1`; para habilitarlo se debe asignar un GPIO real en `config.h`.
+- `I2C_POWER_PIN` usa **GPIO0** como enable/alimentación de OLED y sensores I2C. El arranque deja GPIO0 en LOW, luego lo sube a HIGH antes de inicializar `Wire`, OLED y sensores.
+- El comando serial `i2c reset` corta y reactiva GPIO0, reinicia `Wire`, redetecta OLED y vuelve a revisar los sensores I2C.
 - La configuración por defecto de estación monta SD automáticamente, inicia autostart, activa modo debug y deja GNSS apagado.
+
+## Arranque y pantalla OLED
+
+Secuencia visible de arranque:
+
+1. GPIO0 mantiene apagada la alimentación I2C brevemente (`LOW`).
+2. GPIO0 pasa a `HIGH` para energizar OLED y sensores I2C.
+3. Se inicializa el bus I2C a 50 kHz.
+4. Se detecta OLED en `0x3C/0x3D`.
+5. Aparece la animación HIRI; arriba a la derecha se muestra la versión y abajo a la derecha el ID del dispositivo.
+6. Se muestra una ventana única de revisión de inicio:
+
+```text
+I2C   OK/FAIL
+OLED  OK/FAIL
+SD    OK/FAIL
+RTC   OK/FAIL
+SHT4  OK/FAIL
+SHT31 OK/FAIL
+ENS   OK/FAIL
+GAS   OK/FAIL
+```
+
+Cada fila pasa de `WAIT` a `...` y luego a `OK` o `FAIL`. La ventana queda visible cerca de 3 segundos al finalizar para revisar el estado antes de continuar con módem/red y las pantallas normales.
 
 ## Configuración operativa por defecto
 
 Definida en `config.ino`:
 
 ```text
-Guardado SD: cada 30 s
+Guardado SD: cada 180 s (3 min)
 Envío HTTP: cada 300 s (5 min)
 Timeout HTTP: 15 s
 OLED auto-off: desactivado
@@ -132,10 +159,10 @@ También se crean archivos auxiliares:
 
 El envío HTTP usa `DEVICE_ID_STR` para seleccionar una lista fija de `idsSensores` en `getIdsSensores()`.
 
-Para `DEVICE_ID_STR = "10"`:
+Para `DEVICE_ID_STR = "12"`:
 
 ```text
-1114,1115,1115,1116,1116,1116,1116,1116,1117,1118,1118,1118,1118,1118,1119,1120,1120
+1128,1129,1129,1130,1130,1130,1130,1130,1131,1132,1132,1132,1132,1132,1133,1134,1134
 ```
 
 La lista de `idsVariables` es común para todos los dispositivos soportados:
@@ -158,15 +185,17 @@ Los datos faltantes o inválidos se transmiten como `-1` para no romper la URL.
 
 Cambios incorporados en esta actualización del README:
 
-- Se actualizó la versión documentada desde **Pro V0.0.35** a **Pro V0.1.15V**, que es la versión definida actualmente en el código.
+- Se actualizó la versión documentada a **Pro V0.1.27R**, que es la versión definida actualmente en el código.
 - Se corrigieron los comandos de Arduino CLI para compilar y subir el sketch real del proyecto desde la carpeta actual.
 - Se documentó la configuración activa para la variante HIRIDUST/VALPO: `BTN1` en GPIO39, `BTN2` deshabilitado, `Serial2` en RX23/TX19 y SD por HSPI.
-- Se agregó el estado operativo por defecto: SD cada 30 segundos, HTTP cada 5 minutos, autostart/debug activos y GNSS apagado por defecto.
+- Se agregó el estado operativo por defecto: SD cada 3 minutos, HTTP cada 5 minutos, autostart/debug activos y GNSS apagado por defecto.
 - Se incorporaron sensores que no estaban reflejados en el README anterior: SHT4x, gas I2C y ENS160.
 - Se actualizó el formato CSV con las columnas nuevas `gasPpm`, `tvoc`, `eco2`, `aqi` y `notas`.
 - Se documentaron los archivos auxiliares de trazabilidad: errores y transmisiones HTTP fallidas.
 - Se corrigió el valor enviado para datos HTTP faltantes o inválidos: actualmente es `-1`, no `-0`.
-- Se agregó el mapeo HTTP activo para `DEVICE_ID_STR = "10"`.
+- Se agregó el mapeo HTTP activo para `DEVICE_ID_STR = "12"`.
+- Se documentó GPIO0 como `I2C_POWER_PIN` para enable/power-cycle de OLED y sensores I2C.
+- Se documentó la nueva animación con versión/ID y la ventana única de revisión de arranque con estados `OK/FAIL`.
 
 ## Disclaimer de responsabilidad
 
