@@ -121,7 +121,7 @@ String currentNote = "9";
 String lastSavedCSVLine = "";
 File uploadFile;
 String deviceID = "/HIRIPV";
-const char *DEVICE_ID_STR = "10"; // Se actualizara desde config o manualmente
+const char *DEVICE_ID_STR = "12"; // Se actualizara desde config o manualmente
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
@@ -754,6 +754,7 @@ void setup() {
   Serial.println("[I2C_PWR] I2C power HIGH before bus init");
   delay(I2C_POWER_ON_SETTLE_MS);
 #endif
+delay(300);
   configureI2CBus();
   bootStatus("I2C", "OK", true);
   pixels.begin(); pixels.setPixelColor(0, pixels.Color(0, 50, 100)); pixels.show();
