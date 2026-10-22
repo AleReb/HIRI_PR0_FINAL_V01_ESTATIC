@@ -120,8 +120,8 @@ String failedTxPath = "";
 String currentNote = "9";
 String lastSavedCSVLine = "";
 File uploadFile;
-String deviceID = "/HIRIPV";
-const char *DEVICE_ID_STR = "12"; // Se actualizara desde config o manualmente
+String deviceID = "/HIRIPDUST";
+const char *DEVICE_ID_STR = "13"; // Se actualizara desde config o manualmente
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
