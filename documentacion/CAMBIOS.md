@@ -1,5 +1,74 @@
 # Registro de Cambios - FirmwarePro
 
+## [Documentación] - 2026-10-26
+
+Revisión integral contra el código de trabajo **Pro V0.1.29R**; no modifica el
+firmware ni incrementa su versión.
+
+- README, manual técnico, manual de usuario, estructura de menú y guía de
+  desarrollo sincronizados; se integraron las secciones añadidas y se quitaron
+  afirmaciones operativas que el flujo actual no implementa.
+- Estado actual documentado: ID **3**, AP `HIRIPRO_3`, APN `gigsky-02`.
+  Estos valores pertenecen a la copia revisada; los IDs de las versiones
+  históricas siguientes describen su contexto de entonces.
+- Conexión: SIM lista, registro celular y datos antes de HTTP; tres intentos
+  totales, 5 s entre intentos y pausa de una hora tras agotar la conexión.
+- Se aclara que la reconexión ocurre al siguiente turno HTTP, la pausa se pierde
+  al reiniciar y los errores del servidor no activan esa pausa.
+- Registro SD cada 180 s durante esperas de conexión; primera muestra al vencer
+  el intervalo. No se promete registro durante WiFi SD ni después de `stop`.
+- Enable I²C GPIO0 activo HIGH, corte 250 ms y estabilización 700 ms;
+  sin dependencia de SIM/red. Se documenta discrepancia RX/TX del constructor PMS.
+- CSV corregido a las 27 columnas reales, sin SHT31; valores ausentes y fecha
+  de respaldo distintos de la política HTTP. Un archivo no vacío conserva su cabecera.
+- Telemetría 1–13 de 17 valores y formato HTTPS del 14 de siete valores;
+  para equipos posteriores se exigen mapeos reales.
+- Se corrige la recomendación de `start` serial: deja logging apagado al iniciar;
+  se documenta BTN1 debug como envío/guardado puntual y BTN2 deshabilitado.
+- Se documenta que el reinicio por horas se almacena pero no se ejecuta en loop;
+  tampoco se programan `syncRtcSmart()` ni `downloadXtraIfDue()` automáticamente.
+- Validación de esta revisión: contraste de fuentes y comprobación de enlaces,
+  cabecera, identidad, APN y mapeos; no se cargó firmware ni se enviaron datos
+  al backend. Las pruebas/compilaciones previas se mantienen como evidencia
+  separada y no sustituyen validación física.
+- Incidente reportado: posible problema de energía; causa sin confirmar mediante
+  un registro de reset o medición incluido en el repositorio.
+
+Las entradas de versiones anteriores se conservan como historial, no como
+configuración vigente. Consultar README y manuales para el estado actual.
+
+## [Pro V0.1.29R] - 2026-10-26
+
+- Nuevo formato estatico desde equipo 14: HTTPS y 7 valores Plantower/SHT41.
+- Mapeo confirmado del equipo 14: 1232,1232,1232,1232,1232,1233,1233;
+  variables 3,6,7,8,9,3,6.
+- Equipos 1 a 13 conservan URL y formato anterior; ID activo conservado en 13.
+- Equipos posteriores requieren sus IDs reales; se rechaza envio sin mapeo.
+- SHT41 ausente no se sustituye por SHT31 en el nuevo formato.
+- Se conservan el registro SD y la politica de 3 intentos sin SIM/red.
+- Pruebas aprobadas: URL exacta/orden del equipo 14, compatibilidad 1-13,
+  datos ausentes, equipos sin mapeo y regresion de registro sin red.
+- Compilacion ESP32 aprobada: flash 1.050.357 bytes (80%), RAM 49.968 bytes (15%).
+- Impacto: cambia el payload del equipo 14; validacion en modem/backend pendiente.
+- Commit relacionado: pendiente.
+
+## [Pro V0.1.28R] - 2026-10-26
+
+- Registro local habilitado antes del modem y conservado sin SIM o sin red.
+- Hasta 3 intentos de conexion celular por ciclo, separados por 5 s, con pausa
+  de 1 hora al fallar; comprobacion de SIM lista y registro LTE/paquetes.
+- Reemplazo de gprsConnect bloqueante por comandos AT con timeout y atencion
+  de sensores/SD/watchdog durante la espera, incluido HTTP y XTRA.
+- Hasta 3 pruebas AT al arrancar; no iniciar GNSS si el modem no responde.
+- Se conservan las modificaciones locales de identificacion/backend del usuario.
+- Impacto: la red deja de detener el registro local; requiere SD operativa.
+- Pruebas simuladas: 7 escenarios de conexion y esperas AT con guardado SD,
+  incluida recuperacion de red y desbordamiento de millis(), aprobadas.
+- Compilacion ESP32 aprobada: 1.048.997 bytes de flash (80%) y 49.968 bytes
+  de RAM estatica (15%), con core esp32 2.0.17.
+- Validacion en hardware pendiente (sin SIM, sin cobertura y recuperacion).
+- Commit relacionado: pendiente.
+
 ## [Pro V0.1.27R] - 2026-05-29
 ### Control de alimentacion I2C por GPIO0 y revision OLED de arranque
 

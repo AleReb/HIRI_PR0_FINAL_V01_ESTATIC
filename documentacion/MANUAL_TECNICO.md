@@ -1,448 +1,402 @@
-# FirmwarePro - Manual Técnico
+# FirmwarePro — Manual técnico
 
-Versión de referencia: **Pro V0.1.27R**  
-Sketch principal: **`HIRI_PR0_FINAL_V01_ESTATIC.ino`**  
-Objetivo: documentación técnica para operación, mantenimiento e integración de la estación HIRI PR0 estática.
+Referencia: **Pro V0.1.29R**. Revisión del código: **2026-10-26**.
+Placa: `esp32:esp32:esp32`; sketch: `HIRI_PR0_FINAL_V01_ESTATIC.ino`.
+Configuración de esta copia: **ID 3**, AP **HIRIPRO_3**, APN **gigsky-02**.
 
----
+## 1. Arquitectura y fuentes de verdad
 
-## 1. Arquitectura general
+| Archivo | Responsabilidad |
+|---|---|
+| Sketch principal | Estados, setup/loop, AT, sensores I²C y construcción del payload |
+| `config.h` | Pines y `SystemConfig` |
+| `config.ino` | Preferencias, defaults y utilidades SD/LED |
+| `http.ino` | Conexión celular con reintentos y petición HTTP(S) por AT |
+| `sd_card.ino` | Cabeceras, muestras CSV y transmisiones fallidas |
+| `PMSandSensorEXTRA.ino` | Parseo PMS/SDS198 y LED de PM2.5 |
+| `ui.ino` | OLED, menú, notas y botones |
+| `serial_commands.ino` | Consola de operación y configuración |
+| `wifi.ino` | AP, DNS y gestor de archivos |
+| `gps.ino` | Parseo NMEA, diagnóstico, recuperación GNSS y utilidades XTRA |
+| `rtc.ino` | Lectura/sincronización de hora y utilidades RTC |
+| `helpers.ino` | Sanitización de valores, motivo de reset y errores |
+| `animacion.ino` | Animación de inicio |
 
-Firmware modular en archivos `.ino`:
+Los comentarios históricos y funciones definidas no implican que estén
+conectados al flujo de ejecución. Esta revisión distingue llamadas efectivas,
+parámetros almacenados y utilidades disponibles.
 
-- `HIRI_PR0_FINAL_V01_ESTATIC.ino`: núcleo, `setup()`, `loop()`, estados globales, sensores base, módem y scheduler.
-- `config.h` / `config.ino`: pines, estructura `SystemConfig`, persistencia y defaults.
-- `gps.ino`: GNSS, parser NMEA, watchdog, diagnósticos y XTRA.
-- `PMSandSensorEXTRA.ino`: PMS5003, SDS198 y LED PM2.5.
-- `sd_card.ino`: CSV diario, errores, failed_tx, headers y rotación por día.
-- `http.ino`: ciclo HTTP por comandos AT del SIM7600.
-- `wifi.ino`: AP, WebServer, DNSServer y captive portal.
-- `ui.ino`: menú OLED, pantallas de estado, botones y modo debug.
-- `serial_commands.ino`: CLI serial completa.
-- `rtc.ino`: RTC y sincronización de hora.
-- `helpers.ino`: utilidades de valores seguros y logging.
-- `animacion.ino`: animación de arranque.
+## 2. Hardware y alimentación I²C
 
----
+| Elemento | Configuración del código |
+|---|---|
+| SIM7600 / Serial1 | TX27, RX26; PWRKEY4, FLIGHT25; DTR32 definido |
+| Plantower / SoftwareSerial | Macros `pms_RX=18`, `pms_TX=5`; ver observación inferior |
+| SDS198 / Serial2 | RX23, TX19; 9600 baud |
+| SD / HSPI | SCLK14, MISO2, MOSI15, CS13 |
+| Batería | ADC35 |
+| NeoPixel | GPIO12, un LED |
+| BTN1 | GPIO39, activo en LOW; resistencia externa según placa |
+| BTN2 | Deshabilitado: `BUTTON_PIN_2=-1` |
+| Enable/alimentación I²C | GPIO0, activo en HIGH |
 
-## 2. Hardware y pines activos
+**Observación de cableado PMS:** el objeto se crea como
+`SoftwareSerial pms(pms_TX, pms_RX)`. Con la biblioteca EspSoftwareSerial
+instalada, cuyo constructor recibe primero RX y luego TX, esto configura
+**RX en GPIO5 y TX en GPIO18**, a diferencia de los nombres de las macros.
+Verificar el cableado real antes de usar esas etiquetas como guía.
+Esta revisión documental no cambia los pines del firmware.
 
-Definidos en `config.h` para la variante HIRIDUST/VALPO:
+GPIO0 se configura como salida, permanece LOW durante **250 ms** y luego
+pasa a HIGH; se esperan **700 ms** antes de continuar el arranque
+(hay además un retardo de 300 ms antes de `configureI2CBus()`).
+`Wire.begin()` usa los pines predeterminados de la placa: el sketch no fija
+SDA/SCL explícitos. El bus se configura a **50 kHz** con timeout de **50 ms**.
 
-```text
-SIM7600: TX27, RX26, PWRKEY4, DTR32, FLIGHT25
-PMS5003: RX18, TX5 (SoftwareSerial)
-SDS198 / Serial2: RX23, TX19
-Batería: ADC35
-NeoPixel: GPIO12
-SD HSPI: SCLK14, MISO2, MOSI15, CS13
-BTN1: GPIO39
-BTN2: deshabilitado por defecto (-1)
-I2C enable/power: GPIO0
-```
+El enable queda HIGH durante la operación, también sin SIM o sin red.
+`recoverI2CBus()` y el comando serial `i2c reset` lo bajan temporalmente y
+lo vuelven a activar para recuperar OLED y sensores. GPIO0 controla un circuito
+externo de enable/alimentación; la configuración del software no confirma
+por sí sola la tensión física de la placa.
 
-Notas:
+`POWER_PIN=33` y `MODEM_DTR=32` están definidos, pero no se accionan en el
+flujo actual. El control activo de alimentación I²C es `I2C_POWER_PIN=0`.
 
-- `BTN1` usa lectura activa en LOW y requiere resistencia externa según la placa usada.
-- `BTN2` solo se habilita si `BUTTON_PIN_2` se cambia desde `-1` a un GPIO real.
-- `I2C_POWER_PIN` usa GPIO0 para controlar alimentación/enable de OLED y sensores I2C. En `setup()` parte en LOW, luego sube a HIGH, espera estabilización y recién después inicializa `Wire`.
-- `POWER_PIN` existe como referencia histórica, pero no está activo en el flujo actual.
+## 3. Configuración persistente y reglas de arranque
 
-### Secuencia de alimentación I2C y OLED
+| Parámetro | Comportamiento actual |
+|---|---|
+| SD | Se intenta montar al arrancar; guardado cada 180000 ms |
+| HTTP | Turnos cada 300000 ms; primer turno programado inmediatamente |
+| Timeout de espera HTTPACTION | 15 s si no hay otro valor persistido |
+| Autostart | Se fuerza a activado en cada arranque |
+| Esperar GPS | Se fuerza a desactivado en cada arranque |
+| Auto debug | Se fuerza a activado en cada arranque |
+| OLED auto-off | Desactivado si no hay valor persistido |
+| LED | Habilitado al 50 % si no hay valor persistido |
+| GNSS | Desactivado si no hay valor persistido; modo 15 si se habilita |
+| Rotación OLED | `loadConfig()` usa `true` sin valor guardado; `configSetDefaults()` usa `false` |
+| Reinicio programado | Valor configurado de 3 h por defecto; no hay ejecución del temporizador en `loop()` |
 
-1. `pinMode(I2C_POWER_PIN, OUTPUT)`.
-2. `I2C_POWER_PIN = LOW` durante una ventana breve.
-3. `I2C_POWER_PIN = HIGH`.
-4. Espera de estabilización.
-5. `configureI2CBus()` con `Wire.setTimeOut(50)` y reloj I2C a 50 kHz.
-6. Detección de OLED en `0x3C` o `0x3D`.
-7. `u8g2.begin()` y animación de arranque.
-8. Ventana única de revisión de inicio.
+`enforceStationStartupConfig()` restablece SD automática, periodos SD/HTTP,
+autostart, no esperar GPS y auto debug al arrancar. Los comandos seriales
+pueden cambiar algunos valores durante la sesión, pero esos parámetros
+se vuelven a imponer en el siguiente inicio. Los comandos `set ...`
+guardan automáticamente en `Preferences`.
 
-La recuperación `recoverI2CBus()` ejecuta el mismo power-cycle sobre GPIO0, reinicia `Wire`, redetecta OLED y vuelve a inicializar sensores.
-
----
-
-## 3. Configuración persistente
-
-Namespace `config`:
-
-- `sdAuto`, `sdSavePer`
-- `httpPer`, `httpTO`
-- `oledOff`, `oledTO`
-- `ledEn`, `ledBr`
-- `autoStart`, `autoGPS`, `autoGPSTO`, `autoDbg`
-- `rotDisp`
-- `gnssEn`, `gnssMode`
-
-Defaults vigentes:
-
-```text
-sdAutoMount = true
-sdSavePeriod = 180000 ms
-httpSendPeriod = 300000 ms
-httpTimeout = 15 s
-oledAutoOff = false
-ledEnabled = true
-ledBrightness = 50 %
-autostart = true
-autostartWaitGps = false
-autoDebug = true
-rotateDisplay = false en configSetDefaults()
-gnssEnabled = false
-gnssMode = 15
-```
-
-Namespace `system`:
-
-- `sendCnt`
-- `sdCnt`
-- `csvFile`
-- `streaming`
-
-Namespace `rtc`:
-
-- `syncCnt`
-
----
-
-## 4. Máquina de estados operativa
-
-Estados funcionales relevantes:
-
-- `streaming`: habilita transmisión HTTP periódica.
-- `loggingEnabled`: habilita guardado SD periódico.
-- `wifiModeActive`: habilita modo AP/Web.
-- `uiFullMode`: activa vista completa/modo debug.
-- `displayState`: subestados de UI (`DISP_NORMAL`, `DISP_MESSAGE`, `DISP_PROMPT`, `DISP_NETWORK`, `DISP_RTC`, `DISP_STORAGE`, `DISP_GPS`, `DISP_WIFI`).
-
-Bucle principal:
-
-1. Alimenta watchdog.
-2. Procesa botones.
-3. Si `wifiModeActive`, atiende DNS/WebServer, refresca display y retorna.
-4. Si no hay WiFi activo:
-   - Ejecuta GNSS solo si `config.gnssEnabled`.
-   - Actualiza sensores.
-   - Lee PMS/SDS198.
-   - Actualiza LED PM2.5.
-   - Atiende AT async.
-   - Muestrea batería.
-   - Refresca OLED.
-   - Ejecuta watchdog de red, backoff HTTP y health log.
-   - Guarda SD según `sdSavePeriod`.
-   - Envía HTTP según `httpSendPeriod`.
-   - Atiende comandos seriales.
-
----
-
-## 5. Sensores
-
-Sensores actuales:
-
-- PMS5003: PM1.0, PM2.5, PM10, temperatura y humedad si están disponibles.
-- SDS198: PM100/TSP por `Serial2`.
-- SHT4x: temperatura y humedad externa principal.
-- SHT31: temperatura y humedad alternativa/compatibilidad.
-- DFRobot MultiGas I2C: concentración de gas.
-- ENS160: TVOC, eCO2, AQI y validación de estado.
-- RTC DS3231: tiempo y temperatura interna.
-- ADC batería: promedio suavizado.
-
-Mecanismos de robustez:
-
-- Revisión secuencial de arranque por sensor con estado en Serial y OLED.
-- Recuperación de bus I2C ante fallas repetidas.
-- Power-cycle de OLED/sensores I2C usando GPIO0.
-- Reintento/reinicialización para SHT4x y ENS160.
-- Valores seguros para HTTP cuando una lectura no está disponible.
-
-Durante el arranque se muestra una sola ventana de revisión con filas:
+Claves del namespace `config`:
 
 ```text
-I2C, OLED, SD, RTC, SHT4, SHT31, ENS, GAS
+sdAuto, sdSavePer, httpPer, httpTO, oledOff, oledTO,
+ledEn, ledBr, autoStart, autoGPS, autoGPSTO, autoDbg,
+rotDisp, rebootH, gnssEn, gnssMode
 ```
 
-Cada fila se actualiza de `WAIT` a `...` y finalmente a `OK` o `FAIL`. Al terminar, la ventana queda visible cerca de 3 segundos.
+En `system` se leen `sendCnt`, `csvFile` y `streaming`.
+El contador HTTP se persiste al enviar con éxito. `sdSaveCounter` se
+incrementa en RAM: no se restaura desde `sdCnt` al arrancar, aunque
+`resetcnt` escriba esa clave. El estado `streaming` anterior se lee,
+pero el autostart impuesto inicia la sesión independientemente de ese estado.
+Las funciones RTC usan `rtc/syncCnt` para el contador de sincronizaciones.
 
----
+## 4. Arranque y scheduler local
 
-## 6. GNSS
+Orden efectivo de `setup()`:
 
-El subsistema GNSS existe, pero en la configuración de estación está **desactivado por defecto** (`gnssEnabled = false`).
+1. Inicia Serial a 115200 y watchdog de tarea de 60 s.
+2. Ejecuta secuencia GPIO0 e inicializa I²C.
+3. Imprime versión y motivo/etapa previa de reinicio.
+4. Carga preferencias y aplica `enforceStationStartupConfig()`.
+5. Monta SD e intenta crear la cabecera del archivo.
+6. Detecta OLED y ejecuta animación; inicia UART PMS/SDS198, RTC y sensores.
+7. Muestra revisión de arranque durante unos 3 s.
+8. Habilita autostart: `streaming=true`, `loggingEnabled=SDOK`.
+9. Marca adquisición local lista, antes de abrir Serial1 y probar módem.
+10. Realiza hasta tres pruebas AT de 5 s cada una, con pulsos PWRKEY tras fallo.
+11. Si responde, configura ahorro del módem y llama utilidades XTRA/GNSS;
+    estas respetan `gnssEnabled`. Si no responde, omite ese inicio.
+12. Activa auto debug; finaliza setup.
 
-Funciones clave:
+El primer turno HTTP queda vencido a propósito para ejecutarse en el primer
+loop normal. El temporizador SD parte al habilitar autostart y espera 180 s.
 
-- `gnssBringUp()`
-- `setGnssAllWithFallback()`
-- `gnssWatchdog()`
-- `parseNMEA()`, `parseGGA()`, `parseRMC()`, `parseVTG()`, `parseGSA()`, `parseGSV()`
-- `gnssDiagTick()`
-- `gnssDebugPollAsync()`
-- `detectAndEnableXtra()`
-- `downloadXtraOnce()`
-- `downloadXtraIfDue()`
+`serviceLocalData()` agrupa sensores cada 2 s, ingestión PMS/SDS198,
+LED cada 300 ms, muestreo de batería y guardado SD según periodo.
+Se llama desde el loop y desde las esperas AT; incluye guardia de reentrada.
+Los periodos son atendidos cooperativamente, no por interrupciones que
+garanticen tiempo exacto.
 
-Modos GNSS soportados:
+En operación normal, el loop atiende botones, GNSS si el módem está disponible,
+servicio local, información inicial de red, AT, display, turno HTTP y consola.
+En WiFi activo, atiende DNS/WebServer y retorna antes de esas tareas normales;
+no debe describirse como registro local continuo durante gestión WiFi.
 
-- `1`: GPS
-- `3`: GPS + GLONASS
-- `5`: GPS + BEIDOU
-- `7`: GPS + GLONASS + BEIDOU
-- `15`: todas las constelaciones soportadas
+## 5. Conexión celular y operación sin red
 
----
+El registro local se habilita antes de inicializar el módem. En operación normal,
+con SD montada y `loggingEnabled=true`, se guardan muestras cada **180 segundos
+(3 minutos)** aunque falten SIM, cobertura, conexión de datos o GPS. La primera
+muestra periódica se guarda al vencer ese intervalo; no se escribe una muestra
+inmediata por el solo hecho de arrancar.
 
-## 7. SD y trazabilidad
+| Situación | Acción del firmware |
+|---|---|
+| Módem sin respuesta AT | Falla el intento; no transmite HTTP. |
+| SIM ausente, bloqueada o no lista | Exige `+CPIN: READY`; si no lo obtiene, falla el intento sin transmitir. |
+| Sin registro celular | Consulta `CEREG/CGREG` durante una ventana de unos 15 s por intento; si falla, no transmite. |
+| No abre la conexión de datos | Espera confirmación `+NETOPEN: 0`, hasta 30 s, y verifica `NETOPEN?`; si falla, no transmite. |
+| Fallan los tres intentos de conexión | Mantiene registro local y bloquea nuevos intentos de conexión durante una hora. |
+| Vuelve la conexión | Reanuda el envío de la muestra actual; no reenvía el historial CSV. |
+| Conexión de datos abierta pero servidor inaccesible o respuesta HTTP errónea | Registra el fallo y vuelve a probar en el siguiente turno HTTP; este caso no activa la pausa de una hora. |
 
-`sd_card.ino` implementa:
+Cada ciclo permite **hasta 3 intentos en total**, con **5 s entre intentos**.
+La pausa empieza después del tercer fallo. Al vencer la hora se habilita otro
+ciclo al siguiente turno de envío (normalmente cada 5 minutos); no es una alarma
+exacta a los 60 minutos. Una acción manual de envío también pasa por esa protección.
 
-- `generateCSVFileName()`: archivo diario por ID.
-- `writeCSVHeader()`: cabecera controlada.
-- `saveCSVData()`: registro de muestra y nota one-shot.
-- `saveFailedTransmission()`: registro forense de fallas HTTP.
-- `writeErrorLogHeader()`: log estructurado de errores.
+Las esperas AT y las pausas entre intentos atienden sensores, SD y watchdog.
+La pausa de reconexión se conserva solo en RAM: un reinicio la pierde y el
+arranque vuelve a programar un intento inmediato.
 
-Formato del CSV principal:
+`[HTTP] Send`, `[HTTP] GET ...` y `[HTTP][SYNC] URL length = ...`
+aparecen antes de comprobar la conexión. No prueban una transmisión.
+El comando que ejecuta la petición, `AT+HTTPACTION=0`, solo se alcanza después
+de validar la conexión y completar la preparación HTTP.
+
+Flujo interno:
+
+1. `connectCellularOnce()` prueba AT (1 s).
+2. Exige SIM lista (`+CPIN?`, 2 s).
+3. Consulta registro propio/roaming en `CEREG/CGREG` (estados 1 o 5).
+4. Si `NETOPEN?` ya confirma apertura, devuelve éxito.
+5. Configura APN, autenticación si hay usuario y parámetros TCP.
+6. Espera resultado de apertura, y vuelve a comprobar `NETOPEN?`.
+7. `ensurePdpAndNet()` agrupa los tres intentos y aplica pausa solo al
+   agotarlos. Durante la pausa devuelve fallo sin enviar comandos de conexión.
+
+La ventana de registro es de 15 s más el tiempo de finalizar una consulta
+en curso; no es un límite total de todo el ciclo. Los comandos tienen
+timeouts individuales. No se usa `modem.gprsConnect()` en esta ruta.
+`hasRed` refleja el último resultado de conexión, no una prueba continua de
+Internet. La información de operador/CSQ del loop se consulta al inicio;
+no debe usarse como monitor permanente de conectividad.
+
+## 6. Petición HTTP(S)
+
+`sendCurrentMeasurement()` construye la URL y rechaza IDs sin mapeo.
+`httpGet_webhook()` ejecuta:
+
+1. Validación mediante `ensurePdpAndNet()`; ante fallo retorna antes de HTTP.
+2. `HTTPTERM` preventivo, `HTTPINIT`, parámetros CID y URL.
+3. `HTTPACTION=0`, espera de resultado y parseo de código/tamaño.
+4. `HTTPREAD` si hay contenido, seguido de `HTTPTERM`.
+5. Éxito solo para códigos 2xx; incremento persistido de `sendCounter`.
+
+`atRun()` y `sendAtSync()` atienden watchdog y adquisición local mientras
+esperan. La espera de HTTPACTION usa `config.httpTimeout` (15 s por defecto);
+el estado AT tiene además un timeout de 90 s. Un timeout, rechazo del servidor
+o fallo de preparación produce un resultado falso y trazabilidad, no un
+reinicio explícito.
+
+Las variables `httpConsecutiveFailCount`, `httpBackoffActive` y constantes
+relacionadas existen, pero **no están aplicadas al control de envíos**.
+No hay pausa de una hora por respuestas HTTP fallidas. Para comprobar una
+caída del servidor se intenta una petición si la conexión celular está abierta.
+
+## 7. Formatos y mapeos del backend
+
+### Equipos 1 a 13
+
+Usan `http://api-sensores.cmasccp.cl/insertarMedicion` y 17 valores.
+Para el ID activo **3**, `getIdsSensores()` devuelve:
 
 ```text
-ts_ms,time,gpsDate,lat,lon,alt,spd_kmh,pm1,pm25,pm10,pmsTempC,pmsHum,rtcTempC,batV,csq,sats,hdop,xtra_ok,sht31TempC,sht31Hum,sht4xTempC,sht4xHum,resetReason,pm100,gasPpm,tvoc,eco2,aqi,notas
+1048,1049,1049,1050,1050,1050,1050,1050,1051,1052,1052,1052,1052,1052,1053,1054,1054
 ```
 
-Archivos:
-
-- `/hiripro<ID>_DD_MM_YYYY.csv`
-- `/errors_h<ID>.csv`
-- `/failed_h<ID>.csv`
-
----
-
-## 8. HTTP y red celular
-
-Endpoint:
-
-```text
-http://api-sensores.cmasccp.cl/insertarMedicion
-```
-
-APN:
-
-```text
-flolive.net
-```
-
-Flujo HTTP:
-
-1. Validación PDP/red.
-2. `HTTPINIT`.
-3. `HTTPPARA CID`.
-4. `HTTPPARA URL`.
-5. `HTTPACTION=0`.
-6. Parseo de `+HTTPACTION:`.
-7. `HTTPREAD` opcional.
-8. `HTTPTERM`.
-
-Mecanismos de robustez:
-
-- Timeout configurable.
-- Watchdog feed durante esperas.
-- Registro de errores.
-- Registro de URL fallida en SD.
-- Contador de fallas consecutivas.
-- Backoff HTTP tras fallas repetidas.
-- Recuperación de módem.
-
----
-
-## 9. Mapeo HTTP de sensores
-
-`DEVICE_ID_STR` activo:
-
-```text
-12
-```
-
-`idsSensores` para dispositivo 12:
-
-```text
-1128,1129,1129,1130,1130,1130,1130,1130,1131,1132,1132,1132,1132,1132,1133,1134,1134
-```
-
-`idsVariables` común:
+`idsVariables`:
 
 ```text
 53,54,55,11,12,15,45,46,4,3,6,7,8,9,51,3,6
 ```
 
-Orden de `valores`:
+Orden de valores: gas, TVOC, eCO2, latitud, longitud, CSQ, velocidad,
+satélites, batería, temperatura PMS, humedad PMS, PM1, PM2.5, PM10,
+PM100 SDS198, temperatura SHT y humedad SHT. Para los últimos dos se
+prefiere SHT4x y se usa SHT31 como alternativa si corresponde.
+
+### Formato estático desde el equipo 14
+
+Usa `https://api-sensores.cmasccp.cl/insertarMedicion` y siete valores.
+Actualmente solo está definido el mapeo del **equipo 14**:
+
+| Posición | Sensor backend | Variable | Lectura |
+|---|---|---|---|
+| 1 | 1232 | 3 | Temperatura Plantower, °C |
+| 2 | 1232 | 6 | Humedad Plantower, % |
+| 3 | 1232 | 7 | PM1, µg/m³ |
+| 4 | 1232 | 8 | PM2.5, µg/m³ |
+| 5 | 1232 | 9 | PM10, µg/m³ |
+| 6 | 1233 | 3 | Temperatura SHT41, °C |
+| 7 | 1233 | 6 | Humedad SHT41, % |
 
 ```text
-SO2/gas, TVOC, eCO2, latitud, longitud, CSQ, velocidad, satélites,
-batería, temperatura PMS, humedad PMS, PM1.0, PM2.5, PM10,
-PM100 SDS198, temperatura SHT, humedad SHT
+idsSensores=1232,1232,1232,1232,1232,1233,1233
+idsVariables=3,6,7,8,9,3,6
 ```
 
-Los datos faltantes o inválidos se envían como `-1`.
+`valores` contiene lecturas numéricas, sin las descripciones ni las unidades.
+Si SHT4x no está disponible, sus dos posiciones se envían como `-1`;
+el formato estático no lo reemplaza por SHT31. Los flotantes no finitos se
+envían como `-1`. Los valores PM son enteros y pueden ser cero; no existe
+una comprobación de antigüedad de la muestra para todos los campos.
 
----
+Cambiar `DEVICE_ID_STR` a `"14"` selecciona ese mapeo. Cada equipo posterior
+requiere sus IDs reales en `getIdsSensores()`: no se extrapolan ni se reutilizan
+los del 14. Un ID sin mapeo no envía y registra `HTTP_MAPPING_MISSING`.
+El CSV de SD conserva sus 27 columnas para ambos formatos de telemetría.
 
-## 10. WiFi AP y gestor SD
+## 8. SD, fecha y calidad de datos
 
-`wifi.ino` implementa:
+Cabecera literal de `writeCSVHeader()` (**27 columnas**):
 
-- `WiFi.softAP`.
-- IP típica `192.168.4.1`.
-- `DNSServer` en puerto 53.
-- WebServer en puerto 80.
+```csv
+ts_ms,time,gpsDate,lat,lon,alt,spd_kmh,pm1,pm25,pm10,pmsTempC,pmsHum,rtcTempC,batV,csq,sats,hdop,xtra_ok,sht4xTempC,sht4xHum,resetReason,pm100,gasPpm,tvoc,eco2,aqi,notas
+```
 
-Rutas principales:
+- Archivo principal: `/hiripro<ID>_DD_MM_YYYY.csv`.
+- Errores: `/errors_h<ID>.csv`, esquema `timestamp,type,context,message`.
+- Fallos de envío: `/failed_h<ID>.csv`, esquema `timestamp,error_type,url`.
 
-- `/`
-- `/download`
-- `/delete`
-- `/rename`
-- `/upload`
-- `/delete_all`
-- `/ip`
-- `/ssid`
+`saveCSVData()` exige `SDOK && loggingEnabled`. Cambia de nombre al detectar
+otro día del mes y persiste `csvFile`. Cierra cada escritura y limpia la nota
+solo después de abrir/escribir el archivo. La nota inicial es `"9"`;
+posteriormente puede ser una nota de menú o quedar vacía.
 
-Controles:
+La cabecera solo se escribe si el archivo está vacío. `sdnew` vuelve a generar
+el nombre diario y puede abrir el mismo archivo; no garantiza una nueva
+cabecera. Tras cambiar el esquema, respaldar y comprobar archivos existentes.
 
-- Sanitización básica de nombres.
-- Validación de SD disponible.
-- Límite de listado.
-- Modo WiFi exclusivo para priorizar transferencias.
+El CSV no usa una política universal `-1`: PMS T/HR con NaN se guardan como
+`0`, gas/ENS no disponibles como `0`, SHT4x pueden ser NaN o último valor.
+Los PM pueden conservar valores anteriores o cero; no hay caducidad universal
+de muestras. No hay columnas SHT31 en el CSV actual.
 
----
+Sin RTC válido para lectura (`rtcOK=false`), CSV/nombre usan fecha
+`2000-01-01`. El primer intento de cabecera del setup ocurre antes de
+`rtc.begin()`; la primera muestra vuelve a seleccionar nombre al detectar el
+día. `syncRtcSmart()` existe, pero no se llama desde setup/loop actual:
+no prometer inicialización automática de RTC por hora de compilación.
+`saveFailedTransmission()` llama `rtc.now()` sin comprobar `rtcOK`;
+la robustez de ese log sin RTC requiere una corrección y prueba aparte.
 
-## 11. UI y botones
+## 9. GNSS y RTC
 
-`ui.ino` implementa:
+GNSS está apagado salvo preferencia persistida en contrario. `set gnss on`
+guarda la preferencia y requiere reiniciar para el inicio completo.
+Modos válidos: 1 (GPS), 3 (GPS+GLONASS), 5 (GPS+BeiDou),
+7 (GPS+GLONASS+BeiDou), 15 (todas las soportadas).
 
-- Navegación por menú OLED.
-- Confirmación para iniciar/detener muestreo.
-- Pantallas de red, RTC, GPS y almacenamiento.
-- Modo debug/full de telemetría.
-- Pantalla WiFi dedicada.
-- Notas one-shot desde menú Mensajes.
+Con GNSS activo hay parseo NMEA, diagnósticos y reinicios HOT/WARM por
+tiempo sin fix. La adquisición local no espera fix.
+`downloadXtraIfDue()` y `syncRtcSmart()` están definidos, pero no llamados
+por el scheduler actual. La detección/habilitación XTRA no equivale a una
+descarga periódica ejecutándose. `downloadXtraOnce()`, si se llama, usa
+la misma protección de conexión.
 
-Controles lógicos:
+Para sincronización manual usar `rtc`, `modemtime` y `rtcsync`.
+La disponibilidad de hora del módem se comprueba al ejecutar esas utilidades.
 
-- BTN1: navegar/cancelar; en modo debug ejecuta acción rápida de muestreo/transmisión.
-- BTN2: seleccionar/confirmar; en modo debug sale al menú; en pantalla WiFi alterna WiFi SD.
+## 10. WiFi y UI
 
-En hardware actual, BTN2 está deshabilitado por defecto hasta asignar un GPIO real.
+AP: `HIRIPRO_3`, contraseña `12345678`, IP `192.168.4.1`;
+canal 1, hasta dos clientes. El inicio del AP exige SD y credenciales válidas.
+DNS cautivo usa puerto 53; WebServer usa 80.
 
----
+| Método | Ruta |
+|---|---|
+| GET | `/`, `/download`, `/ip`, `/ssid` |
+| POST | `/delete`, `/rename`, `/upload`, `/delete_all` |
 
-## 12. Serial CLI
+No hay autenticación de aplicación para el gestor; usar el AP en un entorno
+controlado y respaldar antes de borrar. La operación WiFi es exclusiva respecto
+del ciclo normal, incluido el procesamiento de consola.
 
-Implementación en `serial_commands.ino`, entrada con `\n`, case-insensitive.
+En auto debug, BTN1 ejecuta envío manual y después intenta una escritura SD,
+habilitando el logging solo temporalmente para esa escritura si la SD está
+disponible. No alterna el muestreo. BTN2 sale al menú, pero actualmente no
+tiene GPIO asignado. Los menús y sus condiciones figuran en
+[menu_structure.md](menu_structure.md).
 
-Comandos:
+## 11. Consola y diferencias de control
 
-- `help`, `?`
-- `rtc`, `rtcsync`, `modemtime`
-- `counters`, `resetcnt`, `stats`
-- `sdinfo`, `sdlist`, `sdnew`, `sdclear`, `sdclear confirm`
-- `netinfo`, `csq`
-- `sysinfo`, `mem`, `reboot`
-- `i2c reset`
-- `start`, `stop`
-- `config`, `config sd`, `config http`, `config display`, `config power`
-- `set sdauto on|off`
-- `set sdsave 3|60|600|1200`
-- `set httpsend 3|60|600|1200`
-- `set httptimeout 5-30`
-- `set oledoff on|off`
-- `set oledtime 60|120|180`
-- `set led on|off`
-- `set ledbright 10|25|50|100`
-- `set autostart on|off`
-- `set gnss on|off`
-- `set autowaitgps on|off`
-- `set autogpsto 60-900`
-- `set autodebug on|off`
-- `set rotatedisplay on|off`
-- `set gnssmode 1|3|5|7|15`
-- `configreset`
-- `configsave`
+Consultar el catálogo en el [Manual de usuario](MANUAL_USUARIO.md).
+Puntos que afectan operación:
 
----
+- `start`, si estaba detenido, activa streaming con logging apagado.
+- `stop` apaga ambas tareas si estaban en marcha.
+- Iniciar desde el menú sí intenta montar SD y activa logging según `SDOK`.
+- Los `set` guardan automáticamente. `configsave` permite guardar el estado.
+- `set reboot 0..720` almacena horas, pero no hay ejecución del reinicio
+  programado. Los reinicios explícitos existentes son `reboot` y menú Reiniciar.
+- `set sdsave 3` significa **3 segundos**, no 3 minutos.
+- Varias preferencias son impuestas nuevamente al arrancar, según sección 3.
 
-## 13. Validación QA
+## 12. Validación y diagnóstico
 
-### Build
+Compilar y cargar desde la raíz:
 
-```bash
+```powershell
 arduino-cli compile --fqbn esp32:esp32:esp32 .
-```
-
-### Flash
-
-```bash
 arduino-cli upload -p COMx --fqbn esp32:esp32:esp32 .
 ```
 
-### Smoke test
+Dependencias utilizadas en la compilación registrada: core ESP32 2.0.17,
+TinyGSM 0.12.0, Adafruit NeoPixel, SHT31, SHT4x, BusIO y Unified Sensor,
+DFRobot ENS160/MultiGasSensor, EspSoftwareSerial, RTClib y U8g2.
+WiFi/WebServer/DNSServer/Wire/SPI/SD/Preferences proceden del core.
 
-1. Boot sin loop de reset.
-2. GPIO0 sube a HIGH antes de inicializar I2C.
-3. OLED muestra animación con versión e ID.
-4. Ventana de revisión muestra `I2C`, `OLED`, `SD`, `RTC`, `SHT4`, `SHT31`, `ENS` y `GAS` con `OK/FAIL`.
-5. SD monta y crea CSV.
-6. Sensores entregan valores o fallan con logs controlados.
-5. Módem registra red y obtiene CSQ.
-6. HTTP responde o deja trazabilidad en `failed_h<ID>.csv`.
-7. WiFi AP aparece como `HIRIPRO_12`.
-8. Web SD responde en `192.168.4.1`.
+Simulación de funciones reales con dobles de hardware:
 
-Si GNSS se habilita, agregar validación de fix, satélites, HDOP y NMEA.
+```powershell
+python tests/test_offline_logging.py
+python tests/test_measurement_payload.py
+```
 
----
+Se comprobaron ausencia de módem/SIM, SIM bloqueada, falta de registro,
+fallo PDP, conexión y recuperación, pausa con guardado, esperas AT y
+desbordamiento de `millis()`. También se validan orden de siete valores,
+compatibilidad de IDs 1–13, datos ausentes y rechazo de IDs desconocidos.
+Estas pruebas no comprueban cableado, escritura física SD, consumo ni TLS real.
 
-## 14. Riesgos y mejoras sugeridas
+En placa comprobar arranque y GPIO0, CSV/cabecera, una hora sin SIM/cobertura,
+recuperación de red, servidor no disponible y entrada/salida WiFi.
+Para reinicios capturar `[BOOT]`, `[RESET] Reason`, etapa previa y últimas
+líneas de conexión. El reporte del usuario sugiere energía como causa del
+incidente; no hay registro de reset que permita confirmarla aquí.
 
-- Password AP por defecto fija.
-- Falta autenticación HTTP para gestión SD.
-- GNSS apagado por defecto puede producir campos de ubicación inválidos si no se habilita explícitamente.
-- BTN2 deshabilitado requiere validación de flujo de UI según hardware final.
-- Conviene agregar endpoint `/health`.
-- Conviene automatizar pruebas de comandos seriales.
-- Validar calibración de sensores antes de despliegue formal.
+La compilación registrada de Pro V0.1.29R fue correcta (80 % flash, 15 % RAM).
+La recepción real HTTPS y la validación eléctrica siguen pendientes.
+No marcar una compilación o simulación como validación completa en terreno.
 
----
+## 13. Limitaciones pendientes de implementación
 
-## Apéndice A. Logs frecuentes
+Esta revisión documenta el código y no cambia su comportamiento:
 
-- `[BOOT]`, `[READY]`
-- `[MODEM]`, `[NET]`
-- `[GNSS]`, `[GNSSDIAG]`, `[GSA]`, `[GSV]`
-- `[HTTP]`
-- `[SD]`, `[FAILED_TX]`
-- `[CONFIG]`, `[SYSTEM]`
-- `[UI]`
+- Pausa de una hora solo por conexión celular; no por fallos HTTP/servidor.
+- Pausa perdida al reiniciar; se programa intento HTTP inmediato al arrancar.
+- WiFi SD suspende registro periódico y consola.
+- `start` serial no habilita logging.
+- Constructor PMS y nombres de macros no coinciden en RX/TX.
+- Reinicio por horas configurado pero sin ejecución en loop.
+- Inicialización inteligente RTC y descarga periódica XTRA no conectadas al scheduler.
+- Marcadores de datos ausentes y antigüedad de muestras no son uniformes.
 
----
+## Responsabilidad y licencia
 
-## Apéndice B. Disclaimer
+El firmware y este manual se entregan tal cual, sin garantía de operación
+ininterrumpida o adecuación a un uso particular. Validar calidad de datos,
+integración eléctrica y funcionamiento en terreno antes del despliegue.
 
-Este firmware y este documento técnico se entregan **"as-is"** (tal cual), sin garantía de funcionamiento ininterrumpido ni adecuación a un caso de uso específico.
-
-La validación metrológica, seguridad eléctrica, cumplimiento regulatorio y operación final son responsabilidad del integrador/desplegador.
-
-Los autores no asumen responsabilidad por daños, pérdidas de datos o consecuencias derivadas del uso del sistema.
-
----
-
-## Apéndice C. Licencia de documentación
-
-Este manual se distribuye bajo:
-
-**Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)**  
-https://creativecommons.org/licenses/by-nc/4.0/
-
-Permisos principales:
-
-- Compartir y adaptar con atribución.
-- Uso no comercial.
+Documentación bajo [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/).
+Consultar [LICENSE](../LICENSE).

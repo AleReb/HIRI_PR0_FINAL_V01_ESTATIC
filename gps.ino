@@ -486,12 +486,7 @@ bool detectAndEnableXtra() {
 // Descarga paquete XTRA una vez, asegurando PDP activo.
 // Guarda estado para trazabilidad y decisiones futuras.
 bool downloadXtraOnce() {
-  if (!modem.isGprsConnected()) {
-    if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
-      Serial.println("[XTRA] PDP reconnect FAIL");
-      return false;
-    }
-  }
+  if (!ensurePdpAndNet()) return false;
   String r;
   (void)sendAtSync("+CGPSXD=?", r, 2000);
   bool ok = sendAtSync("+CGPSXD=1", r, 120000);

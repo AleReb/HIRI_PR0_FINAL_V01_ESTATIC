@@ -7,9 +7,11 @@ Este archivo define el flujo mínimo para mantener trazabilidad y control de ver
 ## 1. Regla de versión
 
 Cada cambio funcional del firmware debe ir acompañado de incremento de versión.
+Una corrección exclusivamente documental conserva la versión del firmware y
+se registra como revisión documental con fecha en `CAMBIOS.md`.
 
 - Ubicación actual: variable `VERSION` en `HIRI_PR0_FINAL_V01_ESTATIC.ino`.
-- Versión actual documentada: **Pro V0.1.15V**.
+- Versión actual documentada: **Pro V0.1.29R**.
 - Formato recomendado: `Pro Vx.y.z` o el formato de release usado por el equipo.
 - No mezclar múltiples features grandes sin subir versión.
 
@@ -69,7 +71,7 @@ Registrar en:
 5. Compilar con Arduino CLI.
 6. Flashear en hardware de prueba.
 7. Validar comportamiento crítico.
-8. Commit y push.
+8. Revisar el diff y publicar commit/push cuando corresponda al alcance autorizado.
 9. Registrar commit funcional confirmado.
 
 ---
@@ -104,14 +106,54 @@ Antes de marcar una versión como estable:
 - CSV coincide con el header documentado.
 - Sensores principales entregan valores o fallan con logs controlados.
 - Módem registra red y obtiene CSQ.
+- Sin SIM lista o sin conexión de datos, no se alcanza `HTTPACTION=0`.
+- Tras tres fallos de conexión hay pausa de una hora y el registro SD continúa
+  durante las esperas y la pausa, en operación normal.
+- La recuperación respeta el siguiente turno HTTP; no exigir precisión al segundo.
+- Si hay conexión celular pero falla el servidor, documentar que no se aplica
+  la pausa de una hora por ese motivo.
 - HTTP transmite o deja trazabilidad en `failed_h<ID>.csv`.
+- Verificar los formatos de equipos 1–13 y del equipo 14, sin usar IDs inventados.
 - WiFi SD operativo si aplica.
 - GNSS validado si está habilitado para el despliegue.
 - Documentación y changelog actualizados.
 
 ---
 
-## 8. Política de rollback
+## 8. Auditoría de documentación contra el código
+
+Antes de declarar documentación sincronizada, comprobar:
+
+- `VERSION`, `DEVICE_ID_STR`, APN y URLs literales del sketch actual. El ID es
+  específico de esta compilación y no debe copiarse de un historial antiguo.
+- Cabecera exacta de `writeCSVHeader()` y posiciones de los datos; actualmente
+  son 27 columnas y no hay columnas SHT31.
+- `loadConfig()`, `configSetDefaults()` y `enforceStationStartupConfig()`:
+  distinguir defaults, preferencias guardadas y valores impuestos al arrancar.
+- Orden del constructor SoftwareSerial, no solo nombres de macros de pines.
+- Condiciones `streaming`, `loggingEnabled` y retorno temprano de modo WiFi.
+- Diferencia entre `start` serial, inicio de menú y autostart.
+- Funciones definidas frente a funciones realmente llamadas: no anunciar
+  temporizador de reinicio, sincronización RTC o descarga XTRA automáticos
+  solo porque exista un parámetro o una función.
+- Protección celular frente a errores HTTP: las variables HTTP de backoff
+  declaradas pero no utilizadas no constituyen una función operativa.
+- URLs nuevas de inserción: probar su construcción sin enviar datos ficticios
+  al backend de producción.
+
+Pruebas disponibles (Python y `g++`):
+
+```powershell
+python tests/test_offline_logging.py
+python tests/test_measurement_payload.py
+```
+
+Registrar por separado compilación, simulación y prueba física. No convertir
+una sospecha de energía en un diagnóstico confirmado sin logs/mediciones.
+En una revisión solo documental basta contrastar fuentes, enlaces y coherencia;
+no hace falta cargar firmware ni repetir compilaciones sin cambios de código.
+
+## 9. Política de rollback
 
 Si un cambio rompe estabilidad:
 
@@ -124,7 +166,7 @@ No sobrescribir historia si ya fue compartida.
 
 ---
 
-## 9. Convención recomendada de commits
+## 10. Convención recomendada de commits
 
 - `feat:` nueva funcionalidad.
 - `fix:` corrección.
@@ -134,6 +176,6 @@ No sobrescribir historia si ya fue compartida.
 
 Ejemplos:
 
-- `feat: agrega backoff HTTP por fallas consecutivas`
+- `feat: agrega reconexion celular con pausa de una hora`
 - `fix: corrige pin de boton para variante valpo`
-- `docs: sincroniza manuales con version Pro V0.1.15V`
+- `docs: sincroniza manuales con version Pro V0.1.29R`

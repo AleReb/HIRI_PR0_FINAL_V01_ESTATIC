@@ -1,5 +1,5 @@
 /*
- * FirmwarePro.ino - Version Pro V0.1.27R
+ * FirmwarePro.ino - Version Pro V0.1.29R
  * Firmware HIRI PR0 estatico: sensores, GNSS, SD, UI OLED y telemetria HTTP.
  * 
  * Basado en la version Debug 0.1.3V (la mas estable) pero con mejoras de performance:
@@ -7,6 +7,7 @@
  * - Lectura de sensores Serial (SDS198 / PMS) ASINCRONICA (no bloqueante).
  * - I2C con reloj conservador y protecciones contra cuelgues.
  * - Monitoreo de etapas (setStage) y Heartbeat (RAM/Heap).
+  NOTA A PARTIR DEL ID 14 LOS DISPOSITVOS SE CAMBIA DE BASE DE DATOS A LA BASE DE DATOS DE SENSORES ESTATICOS, SOLO CON SHT41 Y PLANTOWER!
  */
 
 #include "config.h"
@@ -38,14 +39,14 @@ TinyGsm modem(SerialAT);
 #define WDT_TIMEOUT 60
 static const uint32_t I2C_CLOCK_HZ = 50000;
 static const uint32_t HEARTBEAT_PERIOD_MS = 10000;
-static const uint32_t MODEM_TESTAT_TOTAL_MS = 45000;
-static const uint32_t MODEM_TESTAT_RETRY_MS = 1000;
+static const uint8_t MODEM_AT_MAX_ATTEMPTS = 3;
+static const uint32_t MODEM_TESTAT_RETRY_MS = 5000;
 
 const byte HEADER = 0xAA;
 const byte CMD = 0xCF;
 const byte TAIL = 0xAB;
 
-String VERSION = "Pro V0.1.27R";
+String VERSION = "Pro V0.1.29R";
 
 // -------------------- Global States --------------------
 bool oledOK;
@@ -58,6 +59,8 @@ bool ENS160OK = false;
 bool SDOK = false;
 bool wifiModeActive = false;
 bool hasRed = false;
+bool modemReady = false;
+bool localAcquisitionReady = false;
 bool wdtStarted = false;
 const char *lastStage = "BOOT";
 
@@ -120,16 +123,18 @@ String failedTxPath = "";
 String currentNote = "9";
 String lastSavedCSVLine = "";
 File uploadFile;
-String deviceID = "/HIRIPDUST";
-const char *DEVICE_ID_STR = "13"; // Se actualizara desde config o manualmente
+String deviceID = "/HIRI_EST";
+const char *DEVICE_ID_STR = "14"; // SE CAMBIARA SEGUN ID A PARTIR DEL 14 SERAN LOS ESTATICOS
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
 
-const char apn[] = "flolive.net";
+const char apn[] = "flolive.net";// nuevo apn flolive.net viejo apn gigsky-02
 const char gprsUser[] = "";
 const char gprsPass[] = "";
 const char *API_BASE = "http://api-sensores.cmasccp.cl/insertarMedicion";
+const char *STATIC_API_BASE = "https://api-sensores.cmasccp.cl/insertarMedicion";
+const char *STATIC_IDS_VARIABLES = "3,6,7,8,9,3,6";
 const char *GLOBAL_IDS_VARIABLES = "53,54,55,11,12,15,45,46,4,3,6,7,8,9,51,3,6";
 
 uint32_t sendCounter = 0;
@@ -198,7 +203,7 @@ char bootItemStatus[BOOT_ITEM_COUNT][6] = {
 uint8_t rtcModemSyncCount = 0;
 uint32_t lastModemSyncAttempt = 0;
 const uint32_t MODEM_SYNC_INTERVAL_MS = 600000;
-const uint8_t MAX_MODEM_SYNC_COUNT = 3;
+const uint8_t MAX_MODEM_SYNC_COUNT = 5; //intentos de conexion antes de saltar a modo AP
 bool rtcNetSyncPending = false;
 uint32_t rtcNextProbeMs = 0;
 
@@ -548,6 +553,8 @@ void bootStatus(const String &stage, const String &detail, bool ok) {
   }
 }
 
+void serviceLocalData();
+
 // -------------------- AT Helpers --------------------
 void atBegin(const String &cmd, const String &expect1, const String &expect2, uint32_t timeout_ms) {
   modem.stream.print("AT");
@@ -572,7 +579,7 @@ bool atTick(bool &done, bool &ok) {
     if (at.expect1.length() && line.indexOf(at.expect1) >= 0) { done = true; ok = true; at.active = false; return true; }
     if (at.expect2.length() && line.indexOf(at.expect2) >= 0) { done = true; ok = (at.expect2 == "OK"); at.active = false; return true; }
   }
-  if (at.active && millis() > at.deadline) { done = true; ok = false; at.active = false; return true; }
+  if (at.active && (int32_t)(millis() - at.deadline) >= 0) { done = true; ok = false; at.active = false; return true; }
   done = false; ok = false; return false;
 }
 
@@ -580,7 +587,11 @@ bool atRun(const String &cmd, const String &expect1, const String &expect2, uint
   atBegin(cmd, expect1, expect2, timeout_ms);
   bool done = false, ok = false;
   uint32_t hardDeadline = millis() + timeout_ms + 1000;
-  while (!done && millis() < hardDeadline) { feedWdt(); if (atTick(done, ok)) break; delay(1); }
+  while (!done && (int32_t)(millis() - hardDeadline) < 0) {
+    feedWdt(); serviceLocalData();
+    if (atTick(done, ok)) break;
+    delay(1);
+  }
   at.active = false;
   return ok;
 }
@@ -589,7 +600,11 @@ bool sendAtSync(const String &cmd, String &resp, uint32_t timeout_ms) {
   atBegin(cmd, "OK", "ERROR", timeout_ms);
   bool done = false, ok = false;
   uint32_t hardDeadline = millis() + timeout_ms + 1000;
-  while (!done && millis() < hardDeadline) { feedWdt(); if (atTick(done, ok)) break; delay(1); }
+  while (!done && (int32_t)(millis() - hardDeadline) < 0) {
+    feedWdt(); serviceLocalData();
+    if (atTick(done, ok)) break;
+    delay(1);
+  }
   resp = at.resp;
   at.active = false;
   return ok;
@@ -626,12 +641,23 @@ String getIdsSensores(const String& deviceId) {
   if (deviceId == "11") return"1121,1122,1122,1123,1123,1123,1123,1123,1124,1125,1125,1125,1125,1125,1126,1127,1127";
   if (deviceId == "12") return"1128,1129,1129,1130,1130,1130,1130,1130,1131,1132,1132,1132,1132,1132,1133,1134,1134";
   if (deviceId == "13") return"1135,1136,1136,1137,1137,1137,1137,1137,1138,1139,1139,1139,1139,1139,1140,1141,1141";
- return ""; 
+  if (deviceId == "14") return "1232,1232,1232,1232,1232,1233,1233";
+  return "";
 }
-bool sendCurrentMeasurement() {
-  setStage("sendCurrentMeasurement.build");
-  String idsSensores = getIdsSensores(String(DEVICE_ID_STR));
-  if (idsSensores == "") return false;
+// Genera el payload segun el equipo; no deducir IDs de backend para equipos nuevos.
+String buildMeasurementUrl(const String &deviceId) {
+  String idsSensores = getIdsSensores(deviceId);
+  if (idsSensores.length() == 0) return "";
+
+  if (deviceId.toInt() >= 14) {
+    // Plantower: T, HR, PM1, PM2.5, PM10. SHT41: T, HR.
+    String valores = safeFloatStr(pmsTempC) + "," + safeFloatStr(pmsHum) + "," +
+                     safeUIntStr(PM1) + "," + safeUIntStr(PM25) + "," + safeUIntStr(PM10) + "," +
+                     (SHT4xOK ? safeFloatStr(tempsht4x) : missingUrlValue()) + "," +
+                     (SHT4xOK ? safeFloatStr(humsht4x) : missingUrlValue());
+    return String(STATIC_API_BASE) + "?idsSensores=" + idsSensores +
+           "&idsVariables=" + STATIC_IDS_VARIABLES + "&valores=" + valores;
+  }
 
   String v1 = GasOK ? safeFloatStr(gas.readGasConcentrationPPM()) : missingUrlValue();
   String v2 = (ENS160OK && ens160DataValid) ? safeIntStr(ens160Tvoc) : missingUrlValue();
@@ -648,7 +674,16 @@ bool sendCurrentMeasurement() {
   String valores = v1 + "," + v2 + "," + v3 + "," + v4 + "," + v5 + "," + v6 + "," + v7 + "," + v8 + "," + v9 + "," +
                    v10 + "," + v11 + "," + v12 + "," + v13 + "," + v14 + "," + v15 + "," + v16 + "," + v17;
 
-  String fullUrl = String(API_BASE) + "?idsSensores=" + idsSensores + "&idsVariables=" + GLOBAL_IDS_VARIABLES + "&valores=" + valores;
+  return String(API_BASE) + "?idsSensores=" + idsSensores + "&idsVariables=" + GLOBAL_IDS_VARIABLES + "&valores=" + valores;
+}
+
+bool sendCurrentMeasurement() {
+  setStage("sendCurrentMeasurement.build");
+  String fullUrl = buildMeasurementUrl(String(DEVICE_ID_STR));
+  if (fullUrl.length() == 0) {
+    logError("HTTP_MAPPING_MISSING", "sendCurrentMeasurement", String("No sensor IDs for device ") + DEVICE_ID_STR);
+    return false;
+  }
   Serial.println("[HTTP] GET " + fullUrl);
 
   setStage("sendCurrentMeasurement.httpGet");
@@ -697,11 +732,10 @@ void refreshSensors2s() {
 }
 
 bool waitForModemAT() {
-  uint32_t t0 = millis();
   uint32_t attempt = 0;
-  while (millis() - t0 < MODEM_TESTAT_TOTAL_MS) {
+  while (attempt < MODEM_AT_MAX_ATTEMPTS) {
     feedWdt(); attempt++;
-    if (modem.testAT(MODEM_TESTAT_RETRY_MS)) return true;
+    if (atRun("", "OK", "ERROR", MODEM_TESTAT_RETRY_MS)) return true;
     oledStatus("MODEM", "Retry", String(attempt));
     digitalWrite(MODEM_PWRKEY, HIGH); delay(300); digitalWrite(MODEM_PWRKEY, LOW); delay(700);
   }
@@ -839,29 +873,34 @@ delay(300);
   }
   bootStatus("BTN", String("B1=") + BUTTON_PIN_1 + " I2C_PWR=" + I2C_POWER_PIN, true);
 
-  setStage("modem.boot");
-  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
-  pinMode(MODEM_PWRKEY, OUTPUT); pinMode(MODEM_FLIGHT, OUTPUT); digitalWrite(MODEM_FLIGHT, HIGH);
-  
-  oledStatus("MODEM", "Starting...");
-  if (waitForModemAT()) {
-    atRun("+CEDRXS=0", "OK", "ERROR", 1500);
-    atRun("+CPSMS=0", "OK", "ERROR", 1500);
-    oledStatus("NET", "Attach...");
-    if (modem.waitForNetwork(60000)) {
-      if (modem.gprsConnect(apn, gprsUser, gprsPass)) oledStatus("NET", "OK");
-    }
-    detectAndEnableXtra();
-  }
-  
-  gnssBringUp();
+  // Activar adquisicion local antes de cualquier espera del modem/red.
   if (config.autostart) {
     streaming = true;
     loggingEnabled = SDOK;
     lastHttpSend = millis() - config.httpSendPeriod;
     lastSdSave = millis();
-    Serial.println("[BOOT] Autostart enabled: immediate HTTP, SD every 3 min");
+    Serial.println("[BOOT] Local logging ready; cellular connection is optional");
   }
+  localAcquisitionReady = true;
+  serviceLocalData();
+
+  setStage("modem.boot");
+  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
+  SerialAT.setTimeout(20);
+  pinMode(MODEM_PWRKEY, OUTPUT); pinMode(MODEM_FLIGHT, OUTPUT); digitalWrite(MODEM_FLIGHT, HIGH);
+
+  oledStatus("MODEM", "Starting...");
+  modemReady = waitForModemAT();
+  if (modemReady) {
+    atRun("+CEDRXS=0", "OK", "ERROR", 1500);
+    atRun("+CPSMS=0", "OK", "ERROR", 1500);
+    detectAndEnableXtra();
+    gnssBringUp();
+  } else {
+    Serial.println("[MODEM] No AT response after 3 attempts; SD logging continues");
+    oledStatus("SIN MODEM", "Registro SD activo");
+  }
+  // La conexion celular se intenta desde HTTP, con tres intentos acotados.
   if (config.autoDebug) {
     uiFullMode = true;
     debugScreenIndex = 0;
@@ -872,30 +911,15 @@ delay(300);
   setStage("setup.done");
 }
 
-// -------------------- LOOP --------------------
-bool FirstLoop = true;
-
-void loop() {
-  feedWdt(); setStage("loop.start"); printHeartbeat();
-  handleButtonLogic();
-
-  if (wifiModeActive) {
-    dnsServer.processNextRequest(); server.handleClient();
-    if (haveFix) gnssWatchdog();
-    return;
-  }
-
-  gnssWatchdog(); gnssDiagTick(); gnssDebugPollAsync();
-
+// Se atiende tambien durante las esperas AT: SD y sensores no dependen de la red.
+void serviceLocalData() {
+  static bool servicing = false;
+  if (!localAcquisitionReady || servicing) return;
+  servicing = true;
   static uint32_t lastSensorUpdateMs = 0;
   if (millis() - lastSensorUpdateMs >= 2000) {
     lastSensorUpdateMs = millis();
     refreshSensors2s();
-  }
-
-  if (FirstLoop) {
-    csq = modem.getSignalQuality(); updateNetworkInfo();
-    FirstLoop = false;
   }
 
   readPMS();
@@ -908,11 +932,6 @@ void loop() {
     SDS198OK = true;
   }
 
-  static uint32_t lastAtTick = 0;
-  if (millis() - lastAtTick >= 50) {
-    lastAtTick = millis(); bool d, o; (void)atTick(d, o);
-  }
-
   if (millis() - lastBatSample >= BAT_SAMPLE_INTERVAL_MS) {
     lastBatSample = millis(); batSampleSum += analogRead(BAT_PIN); batSampleCount++;
     if (batSampleCount >= NUM_SAMPLES) {
@@ -921,13 +940,43 @@ void loop() {
     }
   }
 
-  static uint32_t lastDisplayUpdate = 0;
-  if (millis() - lastDisplayUpdate > 60) { lastDisplayUpdate = millis(); renderDisplay(); }
-
   if (loggingEnabled && (millis() - lastSdSave >= config.sdSavePeriod)) {
     lastSdSave = millis(); Serial.println("[SD] Save");
     lastSdOk = saveCSVData(); lastSdActivityMs = millis();
   }
+
+  servicing = false;
+}
+
+// -------------------- LOOP --------------------
+bool FirstLoop = true;
+
+void loop() {
+  feedWdt(); setStage("loop.start"); printHeartbeat();
+  handleButtonLogic();
+
+  if (wifiModeActive) {
+    dnsServer.processNextRequest(); server.handleClient();
+    if (modemReady && haveFix) gnssWatchdog();
+    return;
+  }
+
+  if (modemReady) { gnssWatchdog(); gnssDiagTick(); gnssDebugPollAsync(); }
+
+  serviceLocalData();
+
+  if (FirstLoop && modemReady) {
+    csq = modem.getSignalQuality(); updateNetworkInfo();
+    FirstLoop = false;
+  }
+
+  static uint32_t lastAtTick = 0;
+  if (millis() - lastAtTick >= 50) {
+    lastAtTick = millis(); bool d, o; (void)atTick(d, o);
+  }
+
+  static uint32_t lastDisplayUpdate = 0;
+  if (millis() - lastDisplayUpdate > 60) { lastDisplayUpdate = millis(); renderDisplay(); }
 
   if (streaming && (millis() - lastHttpSend >= config.httpSendPeriod)) {
     lastHttpSend = millis(); Serial.println("[HTTP] Send");

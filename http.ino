@@ -19,88 +19,99 @@ extern bool atRun(const String &cmd, const String &expect1,
                   const String &expect2, uint32_t timeout_ms);
 extern bool sendAtSync(const String &cmd, String &resp, uint32_t timeout_ms);
 
-// Variables for PDP reconnect (kept local static as they are implementation
-// details)
-static uint8_t pdpReconnectFailCount = 0;
-static uint32_t lastPdpReconnectAttempt = 0;
-const uint8_t MAX_PDP_FAILS_BEFORE_BACKOFF = 5;
-const uint32_t PDP_BACKOFF_MS = 15000;
-const uint32_t PDP_RECONNECT_TIMEOUT_MS = 30000;
+extern bool modemReady;
+extern void serviceLocalData();
 
-// Asegura sesión de datos PDP/NETOPEN activa antes de enviar HTTP.
-// Incluye control de backoff para evitar bucles de reconexión agresivos.
+static const uint8_t CELLULAR_MAX_ATTEMPTS = 3;
+static const uint32_t CELLULAR_RETRY_DELAY_MS = 5000;
+static const uint32_t CELLULAR_BACKOFF_MS = 60UL * 60UL * 1000UL;
+static const uint32_t CELLULAR_REGISTER_TIMEOUT_MS = 15000;
+static const uint32_t CELLULAR_NETOPEN_TIMEOUT_MS = 30000;
+static bool cellularBackoffActive = false;
+static uint32_t cellularBackoffStart = 0;
+
+void waitWithLocalLogging(uint32_t durationMs) {
+  uint32_t start = millis();
+  while (millis() - start < durationMs) {
+    esp_task_wdt_reset();
+    serviceLocalData();
+    delay(1);
+  }
+}
+
+bool cellularRegistered(const String &response, const char *prefix) {
+  int pos = response.indexOf(prefix);
+  if (pos < 0) return false;
+  int mode = -1, status = -1;
+  if (sscanf(response.c_str() + pos + strlen(prefix), " %d,%d", &mode, &status) != 2)
+    return false;
+  return status == 1 || status == 5; // Red propia o roaming.
+}
+
+// No usa gprsConnect(): sus esperas internas pueden superar el watchdog.
+// Todos los tiempos de red pasan por AT cooperativo y mantienen el registro SD.
+bool connectCellularOnce() {
+  String response;
+  modemReady = sendAtSync("", response, 1000);
+  if (!modemReady) return false;
+  if (!sendAtSync("+CPIN?", response, 2000) ||
+      response.indexOf("+CPIN: READY") < 0) {
+    Serial.println("[NET] SIM absent, locked or not ready; keeping SD logging");
+    return false;
+  }
+
+  uint32_t start = millis();
+  bool registered = false;
+  do {
+    if ((sendAtSync("+CEREG?", response, 1500) && cellularRegistered(response, "+CEREG:")) ||
+        (sendAtSync("+CGREG?", response, 1500) && cellularRegistered(response, "+CGREG:"))) {
+      registered = true;
+      break;
+    }
+    waitWithLocalLogging(1000);
+  } while (millis() - start < CELLULAR_REGISTER_TIMEOUT_MS);
+  if (!registered) {
+    Serial.println("[NET] Registration timeout; keeping SD logging");
+    return false;
+  }
+
+  if (sendAtSync("+NETOPEN?", response, 2000) && response.indexOf("+NETOPEN: 1") >= 0)
+    return true;
+  if (!sendAtSync(String("+CGDCONT=1,\"IP\",\"") + apn + "\"", response, 2000))
+    return false;
+  if (strlen(gprsUser) > 0 &&
+      !sendAtSync(String("+CGAUTH=1,0,\"") + gprsPass + "\",\"" + gprsUser + "\"", response, 2000))
+    return false;
+  if (!sendAtSync("+CIPMODE=0", response, 2000) ||
+      !sendAtSync("+CIPSENDMODE=0", response, 2000) ||
+      !sendAtSync("+CIPCCFG=10,0,0,0,1,0,75000", response, 2000) ||
+      !sendAtSync("+CIPTIMEOUT=30000,15000,15000", response, 2000))
+    return false;
+  // El OK inmediato no confirma la conexion; esperar el resultado NETOPEN.
+  if (!atRun("+NETOPEN", "+NETOPEN: 0", "ERROR", CELLULAR_NETOPEN_TIMEOUT_MS))
+    return false;
+  return sendAtSync("+NETOPEN?", response, 2000) && response.indexOf("+NETOPEN: 1") >= 0;
+}
+
 bool ensurePdpAndNet() {
-  String dummy;
-  String cgdcont = String("+CGDCONT=1,\"IP\",\"") + String(apn) + "\"";
-  (void)sendAtSync(cgdcont, dummy, 2000);
-
-  if (!modem.isGprsConnected()) {
-    // PROTECCIÓN CONTRA BLOQUEOS: Si hemos fallado muchas veces, esperar antes
-    // de reintentar Esto evita bloqueos cuando se viaja entre redes celulares o
-    // en zonas sin cobertura
-    if (pdpReconnectFailCount >= MAX_PDP_FAILS_BEFORE_BACKOFF) {
-      uint32_t timeSinceLastAttempt = millis() - lastPdpReconnectAttempt;
-      if (timeSinceLastAttempt < PDP_BACKOFF_MS) {
-        uint32_t remainingBackoff = PDP_BACKOFF_MS - timeSinceLastAttempt;
-        Serial.printf(
-            "[NET] Too many failures (%d), waiting %lu ms before retry\n",
-            pdpReconnectFailCount, remainingBackoff);
-        return false;
-      } else {
-        // Han pasado 15s, resetear contador y reintentar
-        Serial.println("[NET] Backoff period over, resetting fail counter");
-        pdpReconnectFailCount = 0;
-      }
-    }
-
-    Serial.println("[NET] PDP down, reconnecting...");
-    strncpy(currentCriticalStage, "http_pdp_reconnect", 31);
-    currentCriticalStage[31] = '\0';
-    lastPdpReconnectAttempt = millis();
-
-    // MINI-LOOP CON WATCHDOG RESET: modem.gprsConnect() puede bloquear 10-60s
-    // Alimentamos el watchdog cada 1s para evitar reset del ESP32
-    uint32_t reconStart = millis();
-    bool reconOk = false;
-    while (millis() - reconStart < PDP_RECONNECT_TIMEOUT_MS) {
-      esp_task_wdt_reset(); // Evitar watchdog timeout cada 1s
-
-      if (modem.gprsConnect(apn, gprsUser, gprsPass)) {
-        reconOk = true;
-        break;
-      }
-
-      delay(1000); // Esperar 1s entre intentos internos
-    }
-
-    if (!reconOk) {
-      pdpReconnectFailCount++;
-      Serial.printf(
-          "[NET] PDP reconnect FAIL after %lu ms (fail count: %d/%d)\n",
-          PDP_RECONNECT_TIMEOUT_MS, pdpReconnectFailCount,
-          MAX_PDP_FAILS_BEFORE_BACKOFF);
-      hasRed = false;
-      return false;
-    }
-
-    // Éxito: resetear contador de fallos
-    pdpReconnectFailCount = 0;
-    hasRed = true;
-    Serial.println("[NET] PDP reconnected OK");
+  if (cellularBackoffActive) {
+    if (millis() - cellularBackoffStart < CELLULAR_BACKOFF_MS) return false;
+    cellularBackoffActive = false;
   }
-
-  String r;
-  strncpy(currentCriticalStage, "http_netopen", 31);
-  currentCriticalStage[31] = '\0';
-  if (!sendAtSync("+NETOPEN?", r, 2000) || r.indexOf("+NETOPEN: 1") < 0) {
-    if (!sendAtSync("+NETOPEN", r, 10000)) {
-      Serial.println("[NET] NETOPEN FAIL");
-      hasRed = false;
-      return false;
+  for (uint8_t attempt = 1; attempt <= CELLULAR_MAX_ATTEMPTS; ++attempt) {
+    Serial.printf("[NET] Connection attempt %u/%u\n", attempt, CELLULAR_MAX_ATTEMPTS);
+    if (connectCellularOnce()) {
+      hasRed = true;
+      Serial.println("[NET] Connected");
+      return true;
     }
+    hasRed = false;
+    if (attempt < CELLULAR_MAX_ATTEMPTS) waitWithLocalLogging(CELLULAR_RETRY_DELAY_MS);
   }
-  hasRed = true;
-  return true;
+  cellularBackoffActive = true;
+  cellularBackoffStart = millis();
+  Serial.println("[NET] 3 attempts failed; offline SD logging, retry in 1 hour");
+  return false;
 }
 
 // Helper: parsear +HTTPACTION: 0,200,123
@@ -175,6 +186,7 @@ bool httpGet_webhook(const String &fullUrl) {
 
     while (!actionDone) {
       esp_task_wdt_reset(); // Reset watchdog para evitar timeout durante HTTP
+      serviceLocalData();
 
       if (atTick(actionDone, actionOk))
         break;

@@ -1,6 +1,7 @@
 # Estructura del Menú FirmwarePro
 
-Referencia: `ui.ino` en estado actual.
+Referencia: `ui.ino` y `setup()/loop()` de **Pro V0.1.29R**.
+Revisión documental: **2026-10-26**.
 
 ---
 
@@ -17,6 +18,11 @@ Hardware actual:
 - `BUTTON_PIN_2 = -1`
 
 Con `BUTTON_PIN_2 = -1`, BTN2 queda deshabilitado por defecto y las acciones que dependen de BTN2 requieren asignar un GPIO real en `config.h`.
+
+El arranque fuerza auto debug. Como BTN2 está deshabilitado, la salida normal
+de debug y las acciones de selección del menú no están disponibles con el
+hardware configurado; requieren habilitar un GPIO real para BTN2.
+GPIO0 es enable de alimentación I²C, no un botón.
 
 La lógica por hold fue retirada; el flujo actual es por clics.
 
@@ -111,15 +117,35 @@ En `DISP_RTC`:
 
 En modo debug/full:
 
-- BTN1 ejecuta acción rápida relacionada con muestreo/transmisión.
+- BTN1 llama `sendCurrentMeasurement()` y después intenta `saveCSVData()`.
+- Si hay SD, habilita logging temporalmente para esa escritura y luego restaura
+  su estado anterior. No alterna ni reactiva el muestreo periódico.
+- El envío manual respeta los tres intentos de conexión y la pausa de una hora;
+  sin SIM lista/conexión no ejecuta HTTPACTION.
 - BTN2 sale al menú principal.
 
 En pantalla WiFi:
 
 - BTN1 no sale si WiFi está activo.
 - BTN2 alterna WiFi SD ON/OFF.
+- Con WiFi inactivo, BTN1 sale de la pantalla.
+- Mientras WiFi está activo, el loop retorna tras DNS/WebServer: se suspenden
+  adquisición normal, guardado periódico SD, HTTP y consola serial.
+- El inicio del AP requiere SD disponible; abrir la pantalla no garantiza que
+  el AP se haya activado. La configuración actual tiene BTN2 deshabilitado.
 
 ---
+
+## Diferencias entre inicio por menú y por serial
+
+La confirmación de inicio del menú intenta montar SD y activa
+`loggingEnabled=SDOK`; detener desactiva ambas tareas. Los temporizadores se
+ponen a cero, pero eso no garantiza una ejecución inmediata durante los
+primeros segundos de uptime.
+
+El comando serial `start` inicia solo streaming con logging apagado si estaba
+detenido. No es equivalente al inicio del menú. El autostart de arranque sí
+habilita registro si SD está disponible.
 
 ## Checklist de mantenimiento
 
