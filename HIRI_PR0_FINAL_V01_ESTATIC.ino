@@ -1,5 +1,5 @@
 /*
- * FirmwarePro.ino - Version Pro V0.1.29R
+ * FirmwarePro.ino - Version Pro V0.1.30R
  * Firmware HIRI PR0 estatico: sensores, GNSS, SD, UI OLED y telemetria HTTP.
  * 
  * Basado en la version Debug 0.1.3V (la mas estable) pero con mejoras de performance:
@@ -7,7 +7,8 @@
  * - Lectura de sensores Serial (SDS198 / PMS) ASINCRONICA (no bloqueante).
  * - I2C con reloj conservador y protecciones contra cuelgues.
  * - Monitoreo de etapas (setStage) y Heartbeat (RAM/Heap).
-  NOTA A PARTIR DEL ID 14 LOS DISPOSITVOS SE CAMBIA DE BASE DE DATOS A LA BASE DE DATOS DE SENSORES ESTATICOS, SOLO CON SHT41 Y PLANTOWER!
+ * Serie estatica AE: 1AE (antiguo 14), 2AE, 3AE, 4AE y 5AE; telemetria SHT41 y Plantower.
+  SERAN 1AE
  */
 
 #include "config.h"
@@ -46,7 +47,7 @@ const byte HEADER = 0xAA;
 const byte CMD = 0xCF;
 const byte TAIL = 0xAB;
 
-String VERSION = "Pro V0.1.29R";
+String VERSION = "Pro V0.1.30R";
 
 // -------------------- Global States --------------------
 bool oledOK;
@@ -124,16 +125,15 @@ String currentNote = "9";
 String lastSavedCSVLine = "";
 File uploadFile;
 String deviceID = "/HIRI_EST";
-const char *DEVICE_ID_STR = "14"; // SE CAMBIARA SEGUN ID A PARTIR DEL 14 SERAN LOS ESTATICOS
+const char *DEVICE_ID_STR = "2AE"; // Serie estatica: 1AE (antiguo 14), 2AE, 3AE, 4AE, 5AE.
 String AP_SSID_STR = "";
 const char *AP_PASSWORD = "12345678";
 String apIpStr = "0.0.0.0";
 
-const char apn[] = "flolive.net";// nuevo apn flolive.net viejo apn gigsky-02
+const char apn[] = "gigsky-02";// nuevo apn flolive.net viejo apn gigsky-02
 const char gprsUser[] = "";
 const char gprsPass[] = "";
 const char *API_BASE = "http://api-sensores.cmasccp.cl/insertarMedicion";
-const char *STATIC_API_BASE = "https://api-sensores.cmasccp.cl/insertarMedicion";
 const char *STATIC_IDS_VARIABLES = "3,6,7,8,9,3,6";
 const char *GLOBAL_IDS_VARIABLES = "53,54,55,11,12,15,45,46,4,3,6,7,8,9,51,3,6";
 
@@ -641,7 +641,11 @@ String getIdsSensores(const String& deviceId) {
   if (deviceId == "11") return"1121,1122,1122,1123,1123,1123,1123,1123,1124,1125,1125,1125,1125,1125,1126,1127,1127";
   if (deviceId == "12") return"1128,1129,1129,1130,1130,1130,1130,1130,1131,1132,1132,1132,1132,1132,1133,1134,1134";
   if (deviceId == "13") return"1135,1136,1136,1137,1137,1137,1137,1137,1138,1139,1139,1139,1139,1139,1140,1141,1141";
-  if (deviceId == "14") return "1232,1232,1232,1232,1232,1233,1233";
+  if (deviceId == "1AE" || deviceId == "14") return "1232,1232,1232,1232,1232,1233,1233";
+  if (deviceId == "2AE") return "1234,1234,1234,1234,1234,1235,1235";
+  if (deviceId == "3AE") return "1236,1236,1236,1236,1236,1237,1237";
+  if (deviceId == "4AE") return "1238,1238,1238,1238,1238,1239,1239";
+  if (deviceId == "5AE") return "1244,1244,1244,1244,1244,1245,1245";
   return "";
 }
 // Genera el payload segun el equipo; no deducir IDs de backend para equipos nuevos.
@@ -649,13 +653,13 @@ String buildMeasurementUrl(const String &deviceId) {
   String idsSensores = getIdsSensores(deviceId);
   if (idsSensores.length() == 0) return "";
 
-  if (deviceId.toInt() >= 14) {
+  if (deviceId == "14" || deviceId.endsWith("AE")) {
     // Plantower: T, HR, PM1, PM2.5, PM10. SHT41: T, HR.
     String valores = safeFloatStr(pmsTempC) + "," + safeFloatStr(pmsHum) + "," +
                      safeUIntStr(PM1) + "," + safeUIntStr(PM25) + "," + safeUIntStr(PM10) + "," +
                      (SHT4xOK ? safeFloatStr(tempsht4x) : missingUrlValue()) + "," +
                      (SHT4xOK ? safeFloatStr(humsht4x) : missingUrlValue());
-    return String(STATIC_API_BASE) + "?idsSensores=" + idsSensores +
+    return String(API_BASE) + "?idsSensores=" + idsSensores +
            "&idsVariables=" + STATIC_IDS_VARIABLES + "&valores=" + valores;
   }
 

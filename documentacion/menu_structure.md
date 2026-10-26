@@ -1,6 +1,6 @@
 # Estructura del Menú FirmwarePro
 
-Referencia: `ui.ino` y `setup()/loop()` de **Pro V0.1.29R**.
+Referencia: `ui.ino` y `setup()/loop()` de **Pro V0.1.30R**.
 Revisión documental: **2026-10-26**.
 
 ---

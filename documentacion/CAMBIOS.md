@@ -1,5 +1,40 @@
 # Registro de Cambios - FirmwarePro
 
+## [Pro V0.1.30R] - 2026-10-26
+
+- Nueva nomenclatura de estaciones estáticas: 1AE (antiguo 14), 2AE, 3AE,
+  4AE y 5AE. ID activo corregido de 1EA a 1AE.
+- Mapeos proporcionados: 1AE=1232/1233, 2AE=1234/1235, 3AE=1236/1237,
+  4AE=1238/1239, 5AE=1244/1245. El salto en 5AE es intencional.
+- Cada equipo envía cinco lecturas Plantower y dos SHT41, con variables
+  3,6,7,8,9,3,6 y la URL HTTP compartida de API_BASE.
+- Selección estática por nombre AE, sin conversión numérica que confunda 1AE
+  con el equipo antiguo 1; se conserva 14 como alias de 1AE.
+- Nombres AE propagados a OLED, AP y nuevos archivos; no se migran archivos previos.
+- Equipos numéricos 1–13 conservan su formato; IDs desconocidos no envían.
+- README, manuales, menú y guía de desarrollo sincronizados.
+- Pruebas de URLs exactas 1AE–5AE, alias 14, compatibilidad 1–13, datos ausentes,
+  rechazo de nombres desconocidos y regresión de operación sin red: aprobadas.
+- Compilación ESP32 aprobada con core 2.0.17: flash 1.050.593 bytes (80 %),
+  RAM estática 49.968 bytes (15 %).
+- Validación física y recepción real del backend pendientes.
+- Commit relacionado: pendiente.
+
+
+## [Corrección de URL compartida] - 2026-10-26
+
+- Se unifica la dirección de ambos formatos en `API_BASE`:
+  `http://api-sensores.cmasccp.cl/insertarMedicion`.
+- Se elimina la constante duplicada `STATIC_API_BASE`; el equipo 14 usa la
+  misma URL que los equipos 1–13. Solo cambian IDs, variables y valores.
+- Se corrigen las referencias HTTPS de los manuales actuales y la prueba del
+  payload. Las entradas anteriores describen el estado de entonces.
+- Se sincroniza la configuración documentada con la copia actual: ID 14,
+  AP `HIRIPRO_14` y APN `flolive.net`.
+- Refactor sin cambio de URL respecto del código recibido, donde ambas
+  constantes ya eran HTTP; se conserva la versión Pro V0.1.29R.
+
+
 ## [Documentación] - 2026-10-26
 
 Revisión integral contra el código de trabajo **Pro V0.1.29R**; no modifica el

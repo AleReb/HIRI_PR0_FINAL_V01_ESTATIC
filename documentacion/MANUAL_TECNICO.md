@@ -1,8 +1,8 @@
 # FirmwarePro — Manual técnico
 
-Referencia: **Pro V0.1.29R**. Revisión del código: **2026-10-26**.
+Referencia: **Pro V0.1.30R**. Revisión del código: **2026-10-26**.
 Placa: `esp32:esp32:esp32`; sketch: `HIRI_PR0_FINAL_V01_ESTATIC.ino`.
-Configuración de esta copia: **ID 3**, AP **HIRIPRO_3**, APN **gigsky-02**.
+Configuración de esta copia: **ID 1AE**, AP **HIRIPRO_1AE**, APN **flolive.net**.
 
 ## 1. Arquitectura y fuentes de verdad
 
@@ -205,10 +205,14 @@ caída del servidor se intenta una petición si la conexión celular está abier
 
 ## 7. Formatos y mapeos del backend
 
+Ambos formatos usan una única constante `API_BASE` con la dirección
+`http://api-sensores.cmasccp.cl/insertarMedicion`. La diferencia está en los
+IDs, las variables y la cantidad de valores; no en el endpoint.
+
 ### Equipos 1 a 13
 
 Usan `http://api-sensores.cmasccp.cl/insertarMedicion` y 17 valores.
-Para el ID activo **3**, `getIdsSensores()` devuelve:
+Por ejemplo, para el equipo **3**, `getIdsSensores()` devuelve:
 
 ```text
 1048,1049,1049,1050,1050,1050,1050,1050,1051,1052,1052,1052,1052,1052,1053,1054,1054
@@ -225,36 +229,58 @@ satélites, batería, temperatura PMS, humedad PMS, PM1, PM2.5, PM10,
 PM100 SDS198, temperatura SHT y humedad SHT. Para los últimos dos se
 prefiere SHT4x y se usa SHT31 como alternativa si corresponde.
 
-### Formato estático desde el equipo 14
+### Serie estática AE
 
-Usa `https://api-sensores.cmasccp.cl/insertarMedicion` y siete valores.
-Actualmente solo está definido el mapeo del **equipo 14**:
+Los nombres actuales son `1AE`, `2AE`, `3AE`, `4AE` y `5AE`.
+`1AE` reemplaza al antiguo equipo 14; el ID numérico `14` se conserva
+como alias compatible de ese mismo mapeo.
 
-| Posición | Sensor backend | Variable | Lectura |
-|---|---|---|---|
-| 1 | 1232 | 3 | Temperatura Plantower, °C |
-| 2 | 1232 | 6 | Humedad Plantower, % |
-| 3 | 1232 | 7 | PM1, µg/m³ |
-| 4 | 1232 | 8 | PM2.5, µg/m³ |
-| 5 | 1232 | 9 | PM10, µg/m³ |
-| 6 | 1233 | 3 | Temperatura SHT41, °C |
-| 7 | 1233 | 6 | Humedad SHT41, % |
+| Equipo | Plantower: T, HR, PM1, PM2.5, PM10 | SHT41: T, HR |
+|---|---|---|
+| 1AE (antes 14) | 1232 | 1233 |
+| 2AE | 1234 | 1235 |
+| 3AE | 1236 | 1237 |
+| 4AE | 1238 | 1239 |
+| 5AE | 1244 | 1245 |
+
+Todos usan la misma `API_BASE`:
+`http://api-sensores.cmasccp.cl/insertarMedicion`.
+La nomenclatura AE cambia el mapeo, no crea otro endpoint.
+Se conserva el protocolo HTTP configurado en la URL base compartida.
+
+`idsSensores` repite el ID Plantower cinco veces y el SHT41 dos veces.
+Las variables son siempre `3,6,7,8,9,3,6`; los siete valores se envían en este orden:
+
+1. Temperatura Plantower (°C).
+2. Humedad Plantower (%).
+3. PM1 (µg/m³).
+4. PM2.5 (µg/m³).
+5. PM10 (µg/m³).
+6. Temperatura SHT41 (°C).
+7. Humedad SHT41 (%).
+
+Ejemplo de `5AE`:
 
 ```text
-idsSensores=1232,1232,1232,1232,1232,1233,1233
+idsSensores=1244,1244,1244,1244,1244,1245,1245
 idsVariables=3,6,7,8,9,3,6
 ```
 
-`valores` contiene lecturas numéricas, sin las descripciones ni las unidades.
-Si SHT4x no está disponible, sus dos posiciones se envían como `-1`;
-el formato estático no lo reemplaza por SHT31. Los flotantes no finitos se
-envían como `-1`. Los valores PM son enteros y pueden ser cero; no existe
-una comprobación de antigüedad de la muestra para todos los campos.
+Se envían lecturas numéricas, sin descripciones ni unidades. SHT4x ausente
+produce `-1` en sus dos posiciones, sin reemplazo SHT31. Los flotantes
+no finitos se envían como `-1`; los PM pueden ser cero y no hay comprobación
+universal de antigüedad de muestras.
 
-Cambiar `DEVICE_ID_STR` a `"14"` selecciona ese mapeo. Cada equipo posterior
-requiere sus IDs reales en `getIdsSensores()`: no se extrapolan ni se reutilizan
-los del 14. Un ID sin mapeo no envía y registra `HTTP_MAPPING_MISSING`.
-El CSV de SD conserva sus 27 columnas para ambos formatos de telemetría.
+La selección usa el nombre completo AE, no `toInt()`: `1AE` no debe
+confundirse con el antiguo equipo `1`. Los equipos numéricos 1–13 conservan
+sus mapeos de 17 valores. No se crean alias numéricos 15, 16, etc.
+Un nombre no configurado, como `6AE`, o el error tipográfico `1EA`, no envía
+y registra `HTTP_MAPPING_MISSING`.
+
+Configurar `DEVICE_ID_STR = "1AE"` (o el AE correspondiente) antes de compilar.
+El nombre se propaga a OLED, `HIRIPRO_1AE`, `/hiripro1AE_DD_MM_YYYY.csv`,
+`/errors_h1AE.csv` y `/failed_h1AE.csv`. Los archivos anteriores no se renombran
+ni migran automáticamente. La cabecera CSV conserva sus 27 columnas.
 
 ## 8. SD, fecha y calidad de datos
 
@@ -309,7 +335,7 @@ La disponibilidad de hora del módem se comprueba al ejecutar esas utilidades.
 
 ## 10. WiFi y UI
 
-AP: `HIRIPRO_3`, contraseña `12345678`, IP `192.168.4.1`;
+AP: `HIRIPRO_1AE`, contraseña `12345678`, IP `192.168.4.1`;
 canal 1, hasta dos clientes. El inicio del AP exige SD y credenciales válidas.
 DNS cautivo usa puerto 53; WebServer usa 80.
 
@@ -366,8 +392,8 @@ python tests/test_measurement_payload.py
 Se comprobaron ausencia de módem/SIM, SIM bloqueada, falta de registro,
 fallo PDP, conexión y recuperación, pausa con guardado, esperas AT y
 desbordamiento de `millis()`. También se validan orden de siete valores,
-compatibilidad de IDs 1–13, datos ausentes y rechazo de IDs desconocidos.
-Estas pruebas no comprueban cableado, escritura física SD, consumo ni TLS real.
+los cinco mapeos AE, alias 14, compatibilidad de IDs 1–13, datos ausentes y rechazo de IDs desconocidos.
+Estas pruebas no comprueban cableado, escritura física SD, consumo ni recepción real del servidor.
 
 En placa comprobar arranque y GPIO0, CSV/cabecera, una hora sin SIM/cobertura,
 recuperación de red, servidor no disponible y entrada/salida WiFi.
@@ -375,8 +401,8 @@ Para reinicios capturar `[BOOT]`, `[RESET] Reason`, etapa previa y últimas
 líneas de conexión. El reporte del usuario sugiere energía como causa del
 incidente; no hay registro de reset que permita confirmarla aquí.
 
-La compilación registrada de Pro V0.1.29R fue correcta (80 % flash, 15 % RAM).
-La recepción real HTTPS y la validación eléctrica siguen pendientes.
+La compilación registrada de Pro V0.1.30R fue correcta (80 % flash, 15 % RAM).
+La recepción real del backend y la validación eléctrica siguen pendientes.
 No marcar una compilación o simulación como validación completa en terreno.
 
 ## 13. Limitaciones pendientes de implementación

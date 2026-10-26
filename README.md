@@ -9,14 +9,14 @@ Revisión documental: **2026-10-26**. Valores leídos del código de trabajo:
 
 | Dato | Valor |
 |---|---|
-| Firmware | **Pro V0.1.29R** |
+| Firmware | **Pro V0.1.30R** |
 | Sketch | `HIRI_PR0_FINAL_V01_ESTATIC.ino` |
 | Placa | ESP32 Dev Module, `esp32:esp32:esp32` |
-| ID activo | `DEVICE_ID_STR = "3"` |
-| AP WiFi | `HIRIPRO_3` |
+| ID activo | `DEVICE_ID_STR = "1AE"` |
+| AP WiFi | `HIRIPRO_1AE` |
 | Contraseña AP | `12345678` |
 | IP del gestor SD | `192.168.4.1` |
-| APN celular | `gigsky-02` |
+| APN celular | `flolive.net` |
 
 El ID y el APN son parámetros de compilación del sketch. Antes de cargar otro
 equipo, revisar esos valores y su mapeo de sensores; los datos de esta tabla
@@ -104,8 +104,7 @@ se conserva el registro local y se omite el inicio GNSS. La conexión celular
 se comprueba desde la ruta de envío HTTP.
 
 El código incluye PMS5003/Plantower, SDS198, SHT4x/SHT41, SHT31, MultiGas y
-ENS160, además de RTC DS3231 y batería. El formato de siete valores del equipo
-14 cambia la telemetría; no elimina las comprobaciones de los otros sensores.
+ENS160, además de RTC DS3231 y batería. El formato de siete valores de la serie AE cambia la telemetría; no elimina las comprobaciones de los otros sensores.
 
 ## Configuración y controles
 
@@ -142,7 +141,7 @@ de inicio del menú habilitan SD si está montada. Ver
 ## Datos locales en SD
 
 Archivo principal: `/hiripro<ID>_DD_MM_YYYY.csv`. Para el equipo activo,
-prefijo `hiripro3`. Cabecera real de **27 columnas**:
+prefijo `hiripro1AE`. Cabecera real de **27 columnas**:
 
 ```csv
 ts_ms,time,gpsDate,lat,lon,alt,spd_kmh,pm1,pm25,pm10,pmsTempC,pmsHum,rtcTempC,batV,csq,sats,hdop,xtra_ok,sht4xTempC,sht4xHum,resetReason,pm100,gasPpm,tvoc,eco2,aqi,notas
@@ -165,10 +164,14 @@ firmware, comprobar que un CSV existente no conserve una cabecera antigua.
 
 ## Formatos de telemetría
 
+Ambos formatos usan una única constante `API_BASE` con la dirección
+`http://api-sensores.cmasccp.cl/insertarMedicion`. La diferencia está en los
+IDs, las variables y la cantidad de valores; no en el endpoint.
+
 ### Equipos 1 a 13
 
 Usan `http://api-sensores.cmasccp.cl/insertarMedicion` y 17 valores.
-Para el ID activo **3**, `getIdsSensores()` devuelve:
+Por ejemplo, para el equipo **3**, `getIdsSensores()` devuelve:
 
 ```text
 1048,1049,1049,1050,1050,1050,1050,1050,1051,1052,1052,1052,1052,1052,1053,1054,1054
@@ -185,36 +188,58 @@ satélites, batería, temperatura PMS, humedad PMS, PM1, PM2.5, PM10,
 PM100 SDS198, temperatura SHT y humedad SHT. Para los últimos dos se
 prefiere SHT4x y se usa SHT31 como alternativa si corresponde.
 
-### Formato estático desde el equipo 14
+### Serie estática AE
 
-Usa `https://api-sensores.cmasccp.cl/insertarMedicion` y siete valores.
-Actualmente solo está definido el mapeo del **equipo 14**:
+Los nombres actuales son `1AE`, `2AE`, `3AE`, `4AE` y `5AE`.
+`1AE` reemplaza al antiguo equipo 14; el ID numérico `14` se conserva
+como alias compatible de ese mismo mapeo.
 
-| Posición | Sensor backend | Variable | Lectura |
-|---|---|---|---|
-| 1 | 1232 | 3 | Temperatura Plantower, °C |
-| 2 | 1232 | 6 | Humedad Plantower, % |
-| 3 | 1232 | 7 | PM1, µg/m³ |
-| 4 | 1232 | 8 | PM2.5, µg/m³ |
-| 5 | 1232 | 9 | PM10, µg/m³ |
-| 6 | 1233 | 3 | Temperatura SHT41, °C |
-| 7 | 1233 | 6 | Humedad SHT41, % |
+| Equipo | Plantower: T, HR, PM1, PM2.5, PM10 | SHT41: T, HR |
+|---|---|---|
+| 1AE (antes 14) | 1232 | 1233 |
+| 2AE | 1234 | 1235 |
+| 3AE | 1236 | 1237 |
+| 4AE | 1238 | 1239 |
+| 5AE | 1244 | 1245 |
+
+Todos usan la misma `API_BASE`:
+`http://api-sensores.cmasccp.cl/insertarMedicion`.
+La nomenclatura AE cambia el mapeo, no crea otro endpoint.
+Se conserva el protocolo HTTP configurado en la URL base compartida.
+
+`idsSensores` repite el ID Plantower cinco veces y el SHT41 dos veces.
+Las variables son siempre `3,6,7,8,9,3,6`; los siete valores se envían en este orden:
+
+1. Temperatura Plantower (°C).
+2. Humedad Plantower (%).
+3. PM1 (µg/m³).
+4. PM2.5 (µg/m³).
+5. PM10 (µg/m³).
+6. Temperatura SHT41 (°C).
+7. Humedad SHT41 (%).
+
+Ejemplo de `5AE`:
 
 ```text
-idsSensores=1232,1232,1232,1232,1232,1233,1233
+idsSensores=1244,1244,1244,1244,1244,1245,1245
 idsVariables=3,6,7,8,9,3,6
 ```
 
-`valores` contiene lecturas numéricas, sin las descripciones ni las unidades.
-Si SHT4x no está disponible, sus dos posiciones se envían como `-1`;
-el formato estático no lo reemplaza por SHT31. Los flotantes no finitos se
-envían como `-1`. Los valores PM son enteros y pueden ser cero; no existe
-una comprobación de antigüedad de la muestra para todos los campos.
+Se envían lecturas numéricas, sin descripciones ni unidades. SHT4x ausente
+produce `-1` en sus dos posiciones, sin reemplazo SHT31. Los flotantes
+no finitos se envían como `-1`; los PM pueden ser cero y no hay comprobación
+universal de antigüedad de muestras.
 
-Cambiar `DEVICE_ID_STR` a `"14"` selecciona ese mapeo. Cada equipo posterior
-requiere sus IDs reales en `getIdsSensores()`: no se extrapolan ni se reutilizan
-los del 14. Un ID sin mapeo no envía y registra `HTTP_MAPPING_MISSING`.
-El CSV de SD conserva sus 27 columnas para ambos formatos de telemetría.
+La selección usa el nombre completo AE, no `toInt()`: `1AE` no debe
+confundirse con el antiguo equipo `1`. Los equipos numéricos 1–13 conservan
+sus mapeos de 17 valores. No se crean alias numéricos 15, 16, etc.
+Un nombre no configurado, como `6AE`, o el error tipográfico `1EA`, no envía
+y registra `HTTP_MAPPING_MISSING`.
+
+Configurar `DEVICE_ID_STR = "1AE"` (o el AE correspondiente) antes de compilar.
+El nombre se propaga a OLED, `HIRIPRO_1AE`, `/hiripro1AE_DD_MM_YYYY.csv`,
+`/errors_h1AE.csv` y `/failed_h1AE.csv`. Los archivos anteriores no se renombran
+ni migran automáticamente. La cabecera CSV conserva sus 27 columnas.
 
 ## WiFi SD
 
@@ -248,8 +273,8 @@ python tests/test_measurement_payload.py
 
 Ejercitan conexión, pausa, servicio SD durante esperas y construcción de URLs.
 No escriben mediciones en el servidor ni sustituyen una prueba física.
-La compilación registrada de Pro V0.1.29R con core ESP32 2.0.17 fue correcta;
-la recepción real por HTTPS y el comportamiento eléctrico requieren validación en placa.
+La compilación registrada de Pro V0.1.30R con core ESP32 2.0.17 fue correcta;
+la recepción real del backend y el comportamiento eléctrico requieren validación en placa.
 
 ## Diagnóstico de conexión y reinicios
 

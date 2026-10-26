@@ -11,7 +11,7 @@ Una corrección exclusivamente documental conserva la versión del firmware y
 se registra como revisión documental con fecha en `CAMBIOS.md`.
 
 - Ubicación actual: variable `VERSION` en `HIRI_PR0_FINAL_V01_ESTATIC.ino`.
-- Versión actual documentada: **Pro V0.1.29R**.
+- Versión actual documentada: **Pro V0.1.30R**.
 - Formato recomendado: `Pro Vx.y.z` o el formato de release usado por el equipo.
 - No mezclar múltiples features grandes sin subir versión.
 
@@ -113,7 +113,7 @@ Antes de marcar una versión como estable:
 - Si hay conexión celular pero falla el servidor, documentar que no se aplica
   la pausa de una hora por ese motivo.
 - HTTP transmite o deja trazabilidad en `failed_h<ID>.csv`.
-- Verificar los formatos de equipos 1–13 y del equipo 14, sin usar IDs inventados.
+- Verificar los formatos de equipos 1–13 y de la serie 1AE–5AE, sin usar IDs inventados.
 - WiFi SD operativo si aplica.
 - GNSS validado si está habilitado para el despliegue.
 - Documentación y changelog actualizados.
@@ -178,4 +178,4 @@ Ejemplos:
 
 - `feat: agrega reconexion celular con pausa de una hora`
 - `fix: corrige pin de boton para variante valpo`
-- `docs: sincroniza manuales con version Pro V0.1.29R`
+- `docs: sincroniza manuales con version Pro V0.1.30R`

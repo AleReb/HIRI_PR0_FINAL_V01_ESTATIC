@@ -1,8 +1,8 @@
 # FirmwarePro — Manual de usuario
 
-Referencia: **Pro V0.1.29R**. Revisión: **2026-10-26**.
-Configuración actual del código: **ID 3**, AP **HIRIPRO_3** y
-APN **gigsky-02**. El ID se cambia en el sketch antes de compilar.
+Referencia: **Pro V0.1.30R**. Revisión: **2026-10-26**.
+Configuración actual del código: **ID 1AE**, AP **HIRIPRO_1AE** y
+APN **flolive.net**. El ID se cambia en el sketch antes de compilar.
 
 ## 1. Qué registra el equipo
 
@@ -12,7 +12,7 @@ eventos y un gestor WiFi para respaldar archivos.
 
 El código contempla Plantower/PMS, SDS198, SHT4x/SHT41, SHT31, MultiGas y ENS160.
 Un sensor no instalado puede aparecer como no detectado sin impedir el uso de
-los otros. El formato de envío del equipo 14 incluye solo Plantower y SHT41.
+los otros. El formato de envío de la serie AE incluye solo Plantower y SHT41.
 
 ## 2. Encendido y registro automático
 
@@ -116,7 +116,7 @@ revisión documental.
 ## 6. Datos de SD y respaldo
 
 Nombre diario: `/hiripro<ID>_DD_MM_YYYY.csv`.
-El equipo activo usa prefijo `hiripro3`.
+El equipo activo usa prefijo `hiripro1AE`.
 Cabecera actual de **27 columnas**:
 
 ```csv
@@ -142,18 +142,62 @@ a los datos nuevos. `sdnew` genera el nombre diario y puede reabrir el mismo CSV
 
 ## 7. Telemetría según el equipo
 
-Los equipos 1 a 13 envían 17 valores a la URL HTTP anterior. El equipo 14
-usa HTTPS y siete lecturas: temperatura/humedad Plantower, PM1, PM2.5, PM10
-y temperatura/humedad SHT41.
+Los equipos numéricos 1–13 conservan sus 17 valores. La serie estática usa
+nombres AE y siete valores; `1AE` corresponde al antiguo equipo 14.
+Esta copia está configurada con **ID 1AE**.
 
-Para el 14: sensores `1232,1232,1232,1232,1232,1233,1233`, variables
-`3,6,7,8,9,3,6`. Se envían números, no los textos de unidades.
-SHT41 ausente se indica con `-1` en sus dos posiciones.
+### Serie estática AE
 
-Esta copia sigue configurada con **ID 3**; no se transforma en equipo 14
-automáticamente. Para IDs posteriores al 14 se requieren sus mapeos reales.
-El cambio de formato HTTP no modifica las 27 columnas de SD.
-Detalles en [README](../README.md#formatos-de-telemetría).
+Los nombres actuales son `1AE`, `2AE`, `3AE`, `4AE` y `5AE`.
+`1AE` reemplaza al antiguo equipo 14; el ID numérico `14` se conserva
+como alias compatible de ese mismo mapeo.
+
+| Equipo | Plantower: T, HR, PM1, PM2.5, PM10 | SHT41: T, HR |
+|---|---|---|
+| 1AE (antes 14) | 1232 | 1233 |
+| 2AE | 1234 | 1235 |
+| 3AE | 1236 | 1237 |
+| 4AE | 1238 | 1239 |
+| 5AE | 1244 | 1245 |
+
+Todos usan la misma `API_BASE`:
+`http://api-sensores.cmasccp.cl/insertarMedicion`.
+La nomenclatura AE cambia el mapeo, no crea otro endpoint.
+Se conserva el protocolo HTTP configurado en la URL base compartida.
+
+`idsSensores` repite el ID Plantower cinco veces y el SHT41 dos veces.
+Las variables son siempre `3,6,7,8,9,3,6`; los siete valores se envían en este orden:
+
+1. Temperatura Plantower (°C).
+2. Humedad Plantower (%).
+3. PM1 (µg/m³).
+4. PM2.5 (µg/m³).
+5. PM10 (µg/m³).
+6. Temperatura SHT41 (°C).
+7. Humedad SHT41 (%).
+
+Ejemplo de `5AE`:
+
+```text
+idsSensores=1244,1244,1244,1244,1244,1245,1245
+idsVariables=3,6,7,8,9,3,6
+```
+
+Se envían lecturas numéricas, sin descripciones ni unidades. SHT4x ausente
+produce `-1` en sus dos posiciones, sin reemplazo SHT31. Los flotantes
+no finitos se envían como `-1`; los PM pueden ser cero y no hay comprobación
+universal de antigüedad de muestras.
+
+La selección usa el nombre completo AE, no `toInt()`: `1AE` no debe
+confundirse con el antiguo equipo `1`. Los equipos numéricos 1–13 conservan
+sus mapeos de 17 valores. No se crean alias numéricos 15, 16, etc.
+Un nombre no configurado, como `6AE`, o el error tipográfico `1EA`, no envía
+y registra `HTTP_MAPPING_MISSING`.
+
+Configurar `DEVICE_ID_STR = "1AE"` (o el AE correspondiente) antes de compilar.
+El nombre se propaga a OLED, `HIRIPRO_1AE`, `/hiripro1AE_DD_MM_YYYY.csv`,
+`/errors_h1AE.csv` y `/failed_h1AE.csv`. Los archivos anteriores no se renombran
+ni migran automáticamente. La cabecera CSV conserva sus 27 columnas.
 
 ## 8. WiFi SD
 
@@ -161,7 +205,7 @@ Desde Información → WIFI SD (ON/OFF), BTN2 activa/desactiva el AP.
 Se requiere SD disponible y BTN2 habilitado físicamente.
 
 ```text
-SSID: HIRIPRO_3
+SSID: HIRIPRO_1AE
 Contraseña: 12345678
 Dirección: http://192.168.4.1
 ```
@@ -223,10 +267,10 @@ difiere de la carga de preferencias vacías.
 | Síntoma | Comprobación |
 |---|---|
 | No guarda | `sdinfo`, `stats`, registro habilitado, tarjeta y alimentación; salir de WiFi SD |
-| No envía | SIM lista, APN `gigsky-02` apropiado para esa SIM, mensajes `[NET]`, pausa y resultado HTTP |
+| No envía | SIM lista, APN `flolive.net` apropiado para esa SIM, mensajes `[NET]`, pausa y resultado HTTP |
 | Se ve `[HTTP] GET` sin recibir datos | Ese mensaje precede la comprobación de conexión; buscar resultado posterior |
 | Buena señal pero servidor no responde | CSQ no confirma Internet; revisar errores HTTP y conexión de datos |
-| No abre la web | Conectar a `HIRIPRO_3` y abrir manualmente `http://192.168.4.1` |
+| No abre la web | Conectar a `HIRIPRO_1AE` y abrir manualmente `http://192.168.4.1` |
 | No se puede salir de debug/entrar al gestor | Comprobar disponibilidad de BTN2; en esta configuración está deshabilitado |
 | GPS sin datos | Apagado por defecto; `set gnss on` y reinicio si se necesita |
 | Fecha incorrecta | Revisar `rtc`; `rtcsync` requiere hora válida del módem |

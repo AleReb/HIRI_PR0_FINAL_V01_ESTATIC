@@ -8,7 +8,7 @@ root = Path(__file__).resolve().parents[1]
 main = (root / "HIRI_PR0_FINAL_V01_ESTATIC.ino").read_text(encoding="utf-8")
 helpers = (root / "helpers.ino").read_text(encoding="utf-8")
 builder = main[main.index("String getIdsSensores("):main.index("bool sendCurrentMeasurement() {", main.index("String getIdsSensores("))]
-constants = "\n".join(re.findall(r'^const char \*(?:API_BASE|STATIC_API_BASE|STATIC_IDS_VARIABLES|GLOBAL_IDS_VARIABLES) = .*;', main, re.M))
+constants = "\n".join(re.findall(r'^const char \*(?:API_BASE|STATIC_IDS_VARIABLES|GLOBAL_IDS_VARIABLES) = .*;', main, re.M))
 safe_helpers = helpers[:helpers.index("// -------------------- Watchdog")]
 stubs = r'''
 #include <cassert>
@@ -27,6 +27,10 @@ struct String : std::string {
   String(int v): std::string(std::to_string(v)) {}
   String(float v,int decimals) { char b[64]; snprintf(b,sizeof(b),"%.*f",decimals,v); assign(b); }
   long toInt() const { try { return std::stol(*this); } catch(...) { return 0; } }
+  bool endsWith(const char *suffix) const {
+    std::string s(suffix);
+    return size()>=s.size() && compare(size()-s.size(),s.size(),s)==0;
+  }
 };
 bool GasOK=true, ENS160OK=true,ens160DataValid=true,SDS198OK=true,SHT4xOK=true,SHT31OK=true;
 float pmsTempC=21.5,pmsHum=45.25,tempsht4x=22.125,humsht4x=46.5;
@@ -38,8 +42,22 @@ struct { float readGasConcentrationPPM() { return 1; } } gas;
 '''
 cases = r'''
 int main() {
-  const String expected="https://api-sensores.cmasccp.cl/insertarMedicion?idsSensores=1232,1232,1232,1232,1232,1233,1233&idsVariables=3,6,7,8,9,3,6&valores=21.500,45.250,11,22,33,22.125,46.500";
+  const String expected="http://api-sensores.cmasccp.cl/insertarMedicion?idsSensores=1232,1232,1232,1232,1232,1233,1233&idsVariables=3,6,7,8,9,3,6&valores=21.500,45.250,11,22,33,22.125,46.500";
   assert(buildMeasurementUrl("14")==expected);
+  assert(buildMeasurementUrl("1AE")==expected);
+  const char *aeIds[]={"1AE","2AE","3AE","4AE","5AE"};
+  const char *aeSensors[]={
+    "1232,1232,1232,1232,1232,1233,1233",
+    "1234,1234,1234,1234,1234,1235,1235",
+    "1236,1236,1236,1236,1236,1237,1237",
+    "1238,1238,1238,1238,1238,1239,1239",
+    "1244,1244,1244,1244,1244,1245,1245"
+  };
+  for(int i=0;i<5;++i) {
+    String exact=String(API_BASE)+"?idsSensores="+aeSensors[i]+
+      "&idsVariables=3,6,7,8,9,3,6&valores=21.500,45.250,11,22,33,22.125,46.500";
+    assert(buildMeasurementUrl(aeIds[i])==exact);
+  }
   for(int id=1;id<=13;++id) {
     String url=buildMeasurementUrl(String(id));
     assert(url.find("http://")==0);
@@ -56,8 +74,10 @@ int main() {
   url=buildMeasurementUrl("14");
   assert(url.substr(url.find("&valores="))=="&valores=-1,-1,11,22,33,-1,-1");
   assert(buildMeasurementUrl("15").empty());
+  assert(buildMeasurementUrl("6AE").empty());
+  assert(buildMeasurementUrl("1EA").empty());
   assert(buildMeasurementUrl("0").empty());
-  std::cout << "PASS: device 14 URL/order, legacy 1-13, missing data, unknown IDs\n";
+  std::cout << "PASS: 1AE-5AE exact URLs, alias 14, legacy 1-13, missing data, unknown IDs\n";
 }
 '''
 with tempfile.TemporaryDirectory(prefix="hiri-payload-test-") as tmp:
